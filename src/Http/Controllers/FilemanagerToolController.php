@@ -27,6 +27,7 @@ class FilemanagerToolController extends Controller
      */
     public function getData(Request $request)
     {
+        return 'test';
         return $this->service->ajaxGetFilesAndFolders($request);
     }
 
