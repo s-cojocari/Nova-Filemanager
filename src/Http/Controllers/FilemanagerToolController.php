@@ -36,6 +36,7 @@ class FilemanagerToolController extends Controller
      */
     public function getDataField($resource, $attribute, NovaRequest $request)
     {
+        return 'test';
         $filter = $this->getFilemanagerFieldFilter($attribute, $request);
 
         return $this->service->ajaxGetFilesAndFolders($request, $filter);
