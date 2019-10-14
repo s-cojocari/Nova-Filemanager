@@ -7,12 +7,16 @@ export default {
             .then(response => response.data);
     },
 
-    getDataField(resource, attribute, pathToList) {
+    getDataField(resource, attribute, pathToList, limit, offset) {
         return window.axios
             .get(
                 '/nova-vendor/infinety-es/nova-filemanager/' + resource + '/' + attribute + '/data',
                 {
-                    params: { folder: pathToList },
+                    params: { 
+                        folder: pathToList,
+                        limit: limit,
+                        offset: offset,
+                    },
                 }
             )
             .then(response => response.data);

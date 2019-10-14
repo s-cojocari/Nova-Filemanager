@@ -105,6 +105,17 @@
 
                             <confirm-modal-delete ref="confirmDelete" v-on:refresh="refreshCurrent" />
 				            
+                            <div class="p-3  flex flex-wrap items-center border-b border-50">
+                                
+                                <button @click="prevPage" class="btn btn-default btn-primary mr-3">
+                                    {{ __('Forrige') }}
+                                </button>
+
+                                <button @click="nextPage" class="btn btn-default btn-primary mr-3">
+                                    {{ __('Næste') }}
+                                </button>
+
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -192,6 +203,9 @@ export default {
         filterBy: '',
         filteredExtensions: [],
         showFilters: false,
+        limit: 10,
+        offset: 0,
+        allFiles: []
     }),
 
     methods: {
@@ -201,12 +215,13 @@ export default {
             this.path = [];
             this.noFiles = false;
             this.loadingfiles = true;
-            api.getDataField(this.resource, this.name, pathToList)
+            api.getDataField(this.resource, this.name, pathToList, this.limit, this.offset)
                 .then(result => {
                     if (_.size(result.files) == 0) {
                         this.noFiles = true;
                     }
-                    this.files = result.files;
+                    this.allFiles = result.files;
+                    this.files = result.files.slice(this.offset, this.offset+this.limit);
                     this.path = result.path;
                     this.filters = result.filters;
 
@@ -226,6 +241,16 @@ export default {
                 });
         },
 
+        nextPage(){
+            this.offset += this.limit;
+            this.files = this.allFiles.slice(this.offset, this.offset+this.limit)
+        },
+
+        prevPage(){
+            this.offset -= this.limit;
+            this.files = this.allFiles.slice(this.offset, this.offset+this.limit)
+        },
+
         showModalCreateFolder() {
             this.$emit('open-modal');
         },
@@ -236,7 +261,7 @@ export default {
 
         goToFolder(path) {
             let pathDefault = this.defaultFolder.split('/');
-
+            this.offset = 0;
             if (path == pathDefault[0]) {
                 this.getData(this.defaultFolder);
                 this.currentPathFolder = this.defaultFolder;
@@ -247,6 +272,7 @@ export default {
         },
 
         goToFolderNav(path) {
+            this.offset = 0;
             this.getData(path);
             this.currentPathFolder = path;
             if (this.currentPathFolder == '/') {
@@ -314,7 +340,7 @@ export default {
                     let params = currentUrl.query(true);
                     this.currentPath = params.path;
                 }
-
+                this.offset = 0;
                 this.getData(this.currentPath);
             }
         },

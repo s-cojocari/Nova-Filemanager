@@ -85,6 +85,8 @@ class FileManagerService
     public function ajaxGetFilesAndFolders(Request $request, $filter = false)
     {
         $folder = $this->cleanSlashes($request->get('folder'));
+        $limit = $request->get('limit');
+        $offset = $request->get('offset');
 
         if (! $this->folderExists($folder)) {
             $folder = '/';
