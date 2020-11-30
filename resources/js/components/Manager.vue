@@ -16,8 +16,8 @@
                 </template>
             </ol>
         </nav>
-        <transition name="fade">
 
+        <transition name="fade">
             <template v-if="uploadingFiles">
                 <div class="px-2 overflow-y-auto files">
                     <div class="drop-files flex flex-wrap items-center border-2 border-primary border-dashed -mx-2">
@@ -30,9 +30,6 @@
 
             <div v-else class="px-2 overflow-y-auto files">
                 <div class="flex flex-wrap -mx-2">
-
-                    
-
                     <template v-if="files.error">
                         <div class="w-full text-lg text-center my-4">
                             {{ __('You don\'t have permissions to view this folder') }}
@@ -43,21 +40,20 @@
                         <div class="w-full text-lg text-center my-4">
                             <loading />
                         </div>
-                    </template> 
+                    </template>
 
-                    <template v-if="noFiles">
+                    <template v-else-if="!files.length">
                         <div class="w-full text-lg text-center my-4">
-                            {{ __('No files or folders in current directory') }}<br><br>
-                            <button class="btn btn-default btn-danger" @click="removeDirectory">{{ __('Remove directory') }}</button>
+                            {{ __(`No ${filter || 'files or folders'} in current directory`) }}<br><br>
+                            <button v-if="buttons.delete_folder && !filter" class="btn btn-default btn-danger" @click="removeDirectory">
+                                {{ __('Remove directory') }}
+                            </button>
                         </div>
                     </template>
 
                     <template v-if="!files.error">
-
                         <template v-if="view == 'grid'">
-
                             <template v-if="!files.error">
-
                                 <template v-if="parent.id">
                                     <div :class="filemanagerClass" :key="parent.id" >
                                         <Folder v-drag-and-drop:folder :ref="'folder_' + parent.id" :file="parent" :data-key="parent.id" class="h-40 folder-item" :class="{'loading': loadingInfo}" v-on:goToFolderEvent="goToFolder" />
@@ -67,45 +63,52 @@
                                 <template v-for="file in filteredFiles">
                                     <div :class="filemanagerClass" :key="file.id" >
                                         <template v-if="file.type == 'file'">
-                                            <ImageLoader 
+                                            <ImageLoader
                                                 v-drag-and-drop:file
                                                 :ref="'file_' + file.id"
                                                 :file="file"
                                                 :data-key="file.id"
+                                                :multi-selecting="multiSelecting"
+                                                :selected-files="selectedFiles"
+                                                :delete-permission="buttons.delete_file"
+                                                :rename-permission="buttons.rename_file"
                                                 class="h-40 file-item"
                                                 @missing="(value) => missing = value"
                                                 v-on:showInfo="showInfo"
                                                 v-on:rename="rename"
-                                                v-on:delete="deleteData" 
+                                                v-on:delete="deleteData"
+                                                v-on:select="select"
                                             />
                                         </template>
                                         <template v-if="file.type == 'dir'">
-                                            <Folder 
-                                                v-drag-and-drop:folder 
+                                            <Folder
+                                                v-drag-and-drop:folder
                                                 :ref="'folder_' + file.id"
                                                 :file="file"
                                                 :data-key="file.id"
+                                                :multi-selecting="multiSelecting"
+                                                :selected-files="selectedFiles"
+                                                :delete-permission="buttons.delete_folder"
+                                                :rename-permission="buttons.rename_folder"
                                                 class="h-40 folder-item"
                                                 :class="{'loading': loadingInfo}"
                                                 v-on:goToFolderEvent="goToFolder"
                                                 v-on:rename="rename"
                                                 v-on:delete="deleteData"
+                                                v-on:select="select"
                                             />
                                         </template>
                                     </div>
                                 </template>
-
-                            </template>
-                            
-                            <template  v-if="!loading">
                             </template>
                         </template>
 
                         <template v-if="view == 'list'">
 
-                            <table class="table custom-table w-full">
+                            <table class="table custom-table w-full" v-if="files.length > 0">
                                 <thead>
                                     <tr>
+                                        <th v-if="multiSelecting" class="w-8"></th>
                                         <th class="w-16">
                                             {{ __('Type') }}
                                         </th>
@@ -126,31 +129,36 @@
                                 <tbody>
 
                                     <template v-if="parent.id">
-                                        
-                                        <Folder 
+
+                                        <Folder
                                             :ref="'folder_' + parent.id"
-                                            :key="parent.id" 
+                                            :key="parent.id"
                                             :file="parent"
                                             :view="view"
                                             class="folder-item"
                                             :class="{'loading': loadingInfo}"
                                             v-on:goToFolderEvent="goToFolder"
                                         />
-                                        
+
                                     </template>
 
 
                                     <template  v-for="file in filteredFiles">
                                         <template v-if="file.type == 'dir'">
-                                            <Folder :key="file.id" 
+                                            <Folder :key="file.id"
                                                     :data-key="file.id"
                                                     :file="file"
                                                     :view="view"
+                                                    :multi-selecting="multiSelecting"
+                                                    :selected-files="selectedFiles"
+                                                    :delete-permission="buttons.delete_folder"
+                                                    :rename-permission="buttons.rename_folder"
                                                     class="folder-item"
                                                     :class="{'loading': loadingInfo}"
                                                     v-on:goToFolderEvent="goToFolder"
                                                     v-on:rename="rename"
                                                     v-on:delete="deleteData"
+                                                    v-on:select="select"
                                             />
                                         </template>
                                         <template v-if="file.type == 'file'">
@@ -159,12 +167,17 @@
                                                 :data-key="file.id"
                                                 :file="file"
                                                 :view="view"
+                                                :multi-selecting="multiSelecting"
+                                                :selected-files="selectedFiles"
+                                                :delete-permission="buttons.delete_file"
+                                                :rename-permission="buttons.rename_file"
                                                 class="file-item"
                                                 :class="{'loading': loadingInfo}"
                                                 @missing="(value) => missing = value"
                                                 v-on:showInfo="showInfo"
                                                 v-on:rename="rename"
                                                 v-on:delete="deleteData"
+                                                v-on:select="select"
                                             />
                                         </template>
                                     </template>
@@ -175,7 +188,6 @@
                 </div>
             </div>
         </transition>
-        
     </div>
 </template>
 
@@ -193,22 +205,18 @@ export default {
     name: 'Manager',
 
     components: {
-        ImageLoader: ImageLoader,
-        Folder: Folder,
-        loading: Loading,
+        ImageLoader,
+        Folder,
+        Loading,
     },
 
     props: {
         files: {
-            default: function() {
-                return [];
-            },
+            default: () => [],
             required: true,
         },
         path: {
-            default: function() {
-                return [];
-            },
+            default: () => [],
             required: true,
         },
         current: {
@@ -220,11 +228,6 @@ export default {
             type: Object,
             required: true,
         },
-        noFiles: {
-            type: Boolean,
-            default: false,
-            required: true,
-        },
         loading: {
             type: Boolean,
             default: false,
@@ -232,7 +235,7 @@ export default {
         },
         popupLoaded: {
             type: Boolean,
-            defalut: false,
+            default: false,
             required: false,
         },
         view: {
@@ -250,10 +253,28 @@ export default {
             required: false,
             default: '',
         },
+        filter: {
+            type: String,
+            required: false,
+        },
         filters: {
             type: Array,
             required: false,
             default: () => [],
+        },
+        multiSelecting: {
+            type: Boolean,
+            default: false,
+            required: false,
+        },
+        selectedFiles: {
+            type: Array,
+            default: () => [],
+            required: false,
+        },
+        buttons: {
+            default: () => [],
+            required: true,
         },
     },
 
@@ -338,6 +359,10 @@ export default {
         },
 
         setDragAndDropEvents() {
+            if (this.buttons.upload_drag == false) {
+                return false;
+            }
+
             let filemanagerContainer = document.querySelector('#filemanager-manager-container');
 
             filemanagerContainer.addEventListener('dragenter', e => {
@@ -562,6 +587,10 @@ export default {
         deleteData(type, path) {
             this.$emit('delete', type, path);
         },
+
+        select(file) {
+            this.$emit('select', file);
+        },
     },
 
     updated: function() {
@@ -618,6 +647,7 @@ export default {
 
         filteredFiles() {
             let filtered = this.files;
+
             if (this.search) {
                 filtered = this.files.filter(m => m.name.toLowerCase().indexOf(this.search) > -1);
             }

@@ -2,15 +2,16 @@
 
 namespace Infinety\Filemanager\Http\Services;
 
-use Illuminate\Http\Request;
-use InvalidArgumentException;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Infinety\Filemanager\Events\FileRemoved;
 use Infinety\Filemanager\Events\FileUploaded;
 use Infinety\Filemanager\Events\FolderRemoved;
 use Infinety\Filemanager\Events\FolderUploaded;
-use Infinety\Filemanager\Exceptions\InvalidConfig;
+use Infinety\Filemanager\Http\Exceptions\InvalidConfig;
+use InvalidArgumentException;
 
 class FileManagerService
 {
@@ -82,7 +83,7 @@ class FileManagerService
      *
      * @return json
      */
-    public function ajaxGetFilesAndFolders(Request $request, $filter = false)
+    public function ajaxGetFilesAndFolders(Request $request)
     {
         $folder = $this->cleanSlashes($request->get('folder'));
         $limit = $request->get('limit');
@@ -92,11 +93,6 @@ class FileManagerService
             $folder = '/';
         }
 
-        // if (!$this->storage->exists($folder)) {
-        //     $folder = '/';
-        // }
-
-        //Set relative Path
         $this->setRelativePath($folder);
 
         $order = $request->get('sort');
@@ -104,13 +100,9 @@ class FileManagerService
             $order = config('filemanager.order', 'mime');
         }
 
-        $defaultFilter = config('filemanager.filter', false);
+        $filter = $request->get('filter', config('filemanager.filter', false));
 
-        if ($filter != false) {
-            $defaultFilter = $filter;
-        }
-
-        $files = $this->getFiles($folder, $order, $defaultFilter);
+        $files = $this->getFiles($folder, $order, $filter);
 
         $filters = $this->getAvailableFilters($files);
 
@@ -130,6 +122,7 @@ class FileManagerService
             'files'   => $files,
             'path'    => $this->getPaths($folder),
             'filters' => $filters,
+            'buttons' => $this->getButtons(),
             'parent'  => $parent,
         ]);
     }
@@ -185,8 +178,14 @@ class FileManagerService
      *
      * @return  json
      */
-    public function uploadFile($file, $currentFolder, $visibility, $uploadingFolder = false)
+    public function uploadFile($file, $currentFolder, $visibility, $uploadingFolder = false, array $rules = [])
     {
+        if (count($rules) > 0) {
+            $pases = Validator::make(['file' => $file], [
+                'file' => $rules,
+            ])->validate();
+        }
+
         $fileName = $this->namingStrategy->name($currentFolder, $file);
 
         if ($this->storage->putFileAs($currentFolder, $file, $fileName)) {
@@ -200,6 +199,23 @@ class FileManagerService
             return response()->json(['success' => true, 'name' => $fileName]);
         } else {
             return response()->json(['success' => false]);
+        }
+    }
+
+    /**
+     * @param $file
+     * @return mixed
+     */
+    public function downloadFile($file)
+    {
+        if (! config('filemanager.buttons.download_file')) {
+            return response()->json(['success' => false, 'message' => 'File not available for Download'], 403);
+        }
+
+        if ($this->storage->has($file)) {
+            return $this->storage->download($file);
+        } else {
+            return response()->json(['success' => false, 'message' => 'File not found'], 404);
         }
     }
 
@@ -275,12 +291,61 @@ class FileManagerService
                 $info = new NormalizeFile($this->storage, $fullPath, $path.$newName);
 
                 return response()->json(['success' => true, 'data' => $info->toArray()]);
-            } else {
-                return response()->json(false);
             }
+
+            return response()->json(false);
         } catch (\Exception $e) {
+            $directories = $this->storage->directories($path);
+
+            if (in_array($file, $directories)) {
+                return $this->renameDirectory($file, $newName);
+            }
+
             return response()->json(false);
         }
+    }
+
+    protected function renameDirectory($dir, $newName)
+    {
+        $path = str_replace(basename($dir), '', $dir);
+        $newDir = $path.$newName;
+
+        if ($this->storage->exists($newDir)) {
+            return response()->json(false);
+        }
+
+        $this->storage->makeDirectory($newDir);
+
+        $files = $this->storage->files($dir);
+        $directories = $this->storage->directories($dir);
+
+        $dirNameLength = strlen($dir);
+
+        foreach ($directories as $subDir) {
+            $subDirName = substr($dir, $dirNameLength);
+            array_push($files, ...$this->storage->files($subDir));
+
+            if (! Storage::exists($newDir.$subDirName)) {
+                $this->storage->makeDirectory($newDir.$subDirName);
+            }
+        }
+
+        $copiedFileCount = 0;
+
+        foreach ($files as $file) {
+            $filename = substr($file, $dirNameLength);
+            $this->storage->copy($file, $newDir.$filename) === true ? $copiedFileCount++ : null;
+        }
+
+        if ($copiedFileCount === count($files)) {
+            $this->storage->deleteDirectory($dir);
+        }
+
+        $fullPath = $this->storage->path($newDir);
+
+        $info = new NormalizeFile($this->storage, $fullPath, $newDir);
+
+        return response()->json(['success' => true, 'data' => $info->toArray()]);
     }
 
     /**
@@ -361,6 +426,20 @@ class FileManagerService
         }
 
         return [];
+    }
+
+    private function getButtons()
+    {
+        return config('filemanager.buttons', [
+            'create_folder'   => true,
+            'upload_button'   => true,
+            'select_multiple' => true,
+            'upload_drag'     => true,
+            'rename_folder'   => true,
+            'delete_folder'   => true,
+            'rename_file'     => true,
+            'delete_file'     => true,
+        ]);
     }
 
     /**

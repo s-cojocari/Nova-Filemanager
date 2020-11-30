@@ -4,8 +4,8 @@ namespace Infinety\Filemanager\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Laravel\Nova\Http\Requests\NovaRequest;
 use Infinety\Filemanager\Http\Services\FileManagerService;
+use Laravel\Nova\Http\Requests\NovaRequest;
 
 class FilemanagerToolController extends Controller
 {
@@ -35,9 +35,7 @@ class FilemanagerToolController extends Controller
      */
     public function getDataField($resource, $attribute, NovaRequest $request)
     {
-        $filter = $this->getFilemanagerFieldFilter($attribute, $request);
-
-        return $this->service->ajaxGetFilesAndFolders($request, $filter);
+        return $this->service->ajaxGetFilesAndFolders($request);
     }
 
     /**
@@ -63,7 +61,13 @@ class FilemanagerToolController extends Controller
     {
         $uploadingFolder = $request->folder ?? false;
 
-        return $this->service->uploadFile($request->file, $request->current ?? '', $request->visibility, $uploadingFolder);
+        return $this->service->uploadFile(
+            $request->file,
+            $request->current ?? '',
+            $request->visibility,
+            $uploadingFolder,
+            $request->rules ? $this->getRules($request->rules) : []
+        );
     }
 
     /**
@@ -101,6 +105,14 @@ class FilemanagerToolController extends Controller
     /**
      * @param Request $request
      */
+    public function downloadFile(Request $request)
+    {
+        return $this->service->downloadFile($request->file);
+    }
+
+    /**
+     * @param Request $request
+     */
     public function rename(Request $request)
     {
         return $this->service->renameFile($request->path, $request->name);
@@ -115,19 +127,14 @@ class FilemanagerToolController extends Controller
     }
 
     /**
-     * @param NovaRequest $request
+     * Get rules in array way.
+     *
+     * @param   string  $rules
+     *
+     * @return  array
      */
-    private function getFilemanagerFieldFilter($attribute, NovaRequest $request)
+    private function getRules($rules)
     {
-        $fields = $request->newResource()->fields($request);
-        foreach ($fields as $field) {
-            if (isset($field->attribute) && $field->attribute == $attribute) {
-                if (isset($field->meta['filterBy'])) {
-                    return $field->meta['filterBy'];
-                }
-            }
-        }
-
-        return false;
+        return json_decode($rules);
     }
 }

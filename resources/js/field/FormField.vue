@@ -7,7 +7,7 @@
                     <template v-if="field.type == 'image'">
                         <ImageDetail class="block w-full" :file="field" :css="''"></ImageDetail>
                     </template>
-                
+
                     <template v-else>
                         <object class="no-preview" v-html="field.image">
                         </object>
@@ -15,7 +15,7 @@
                 </div>
             </template>
 
-            <modal-filemanager 
+            <modal-filemanager
                 ref="filemanager"
                 :resource="resourceName"
                 :name="field.attribute"
@@ -24,33 +24,32 @@
                 :currentPath="currentPath"
                 :defaultFolder="defaultFolder"
                 :filter="field.filterBy"
-                v-on:open-modal="openModalCreateFolder" 
-                v-on:close-modal="closeFilemanagerModal" 
+                :buttons="field.buttons"
+                v-on:open-modal="openModalCreateFolder"
+                v-on:close-modal="closeFilemanagerModal"
                 v-on:update-current-path="updateCurrentPath"
                 v-on:showInfoItem="showInfoItem"
                 v-on:uploadFiles="uploadFiles"
-                :value="value">
-                    
-            </modal-filemanager>
+                :value="value"
+            />
 
-            <DetailPopup 
+            <DetailPopup
                 ref="detailPopup"
                 :info="info"
                 :active="activeInfo"
                 :popup="true"
-                v-on:closePreview="closePreview" 
+                :buttons="field.buttons"
+                v-on:closePreview="closePreview"
                 v-on:refresh="refreshCurrent"
                 v-on:selectFile="setValue"
                 v-on:rename="fileRenamed"
-            >
-            </DetailPopup>
-
+            />
 
             <create-folder ref="createFolderModal" :active="showCreateFolder" :current="currentPath" v-on:closeCreateFolderModal="closeModalCreateFolder" v-on:refresh="refreshCurrent" />
 
-            <UploadProgress ref="uploader" :current="currentPath" :visibility="field.visibility" v-on:removeFile="removeFileFromUpload"></UploadProgress>
+            <UploadProgress ref="uploader" :current="currentPath" :visibility="field.visibility" :rules="field.upload_rules" v-on:removeFile="removeFileFromUpload"></UploadProgress>
 
-            <file-select :id="field.name" :field="field" :css="errorClasses"  v-model="value" v-on:open-modal="openFilemanagerModal"></file-select>
+            <file-select :id="field.name" :field="field" :is-readonly="field.readonly" :css="errorClasses"  v-model="value" v-on:open-modal="openFilemanagerModal"></file-select>
 
             <p class="mt-3 flex items-center text-sm" v-if="value">
                 <button type="button" class="cursor-pointer dim btn btn-link text-primary inline-flex items-center" @click="openRemoveModal">
@@ -61,16 +60,10 @@
                 </button>
             </p>
 
-
-            <portal to="modals">
-                <transition name="fade">
-                    <confirm-modal-remove-file
-                        v-if="removeModalOpen"
-                        @confirm="removeFile"
-                        @close="closeRemoveModal"
-                    />
-                </transition>
-            </portal>
+            <confirm-modal-remove-file
+                :active="removeModalOpen"
+                @confirm="removeFile"
+                @close="closeRemoveModal"></confirm-modal-remove-file>
 
             <p v-if="hasError" class="my-2 text-danger">
                 {{ firstError }}

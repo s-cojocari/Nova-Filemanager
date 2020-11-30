@@ -1,126 +1,115 @@
 <template>
-    <portal to="modals" name="FileManager Field Modal">
-        <transition name="fade">
-            <modal v-if="active">
+    <portal to="modals" name="Modal FileManager" transition="fade-transition">
+        <modal v-if="active">
 
-                <div class="bg-white rounded-lg shadow-lg" style="width: 900px;">
-                    <div class="bg-30 flex flex-wrap border-b border-70">
-                        <div class="w-3/4 px-4 py-3 ">
-                            {{ __('FileManager') }}
+            <portal-target name="portal-filemanager">
 
-                        </div>
+            </portal-target>
 
-                        <div class="w-1/4 flex flex-wrap justify-end">
-                            <button class="btn buttons-actions" v-on:click="closeModal">X</button>
-                        </div>
+            <div class="bg-white rounded-lg shadow-lg" style="width: 900px;">
+                <div class="bg-30 flex flex-wrap border-b border-70">
+                    <div class="w-3/4 px-4 py-3 ">
+                        {{ __('FileManager') }}
                     </div>
 
-                    <div class="flex flex-wrap">
-                        <div class="card relative w-full">
+                    <div class="w-1/4 flex flex-wrap justify-end">
+                        <button class="btn buttons-actions" v-on:click="closeModal">X</button>
+                    </div>
+                </div>
 
-
-                            <div class="p-3  flex flex-wrap items-center border-b border-50">
-
-                                <div class="w-auto flex flex-wrap justify-start">
-
-                                    <label class="manual_upload cursor-pointer">
-                                        <div @click="showUpload = !showUpload" class="btn btn-default btn-primary mr-3">
-                                            {{ __('Upload') }}
-                                        </div>
-                                        <input type="file" multiple="true" @change="uploadFilesByButton"/>
-                                    </label>
-
-                                    <button @click="showModalCreateFolder" class="btn btn-default btn-primary mr-3">
-                                        {{ __('Create folder') }}
-                                    </button>
-
-                                    <button v-if="view == 'list'" @click="viewAs('grid')" class="btn btn-default btn-small btn-primary text-white mr-3">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path class="heroicon-ui" d="M5 3h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2zm0 2v4h4V5H5zm10-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2zm0 2v4h4V5h-4zM5 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4c0-1.1.9-2 2-2zm0 2v4h4v-4H5zm10-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4c0-1.1.9-2 2-2zm0 2v4h4v-4h-4z"/></svg>
-                                    </button>
-
-                                    <button v-if="view == 'grid'" @click="viewAs('list')" class="btn btn-default btn-small btn-primary text-white mr-3">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><path d="M1 4h2v2H1V4zm4 0h14v2H5V4zM1 9h2v2H1V9zm4 0h14v2H5V9zm-4 5h2v2H1v-2zm4 0h14v2H5v-2z"/></svg>
-                                    </button>
-
-                                </div>
-
-
-
-                                <!-- Search -->
-                                <div class="w-auto flex flex-1 flex-wrap justify-end">
-
-                                    <div class="relative w-1/3 max-w-xs mr-3">
-                                        <div class="relative">
-                                            <div class="relative">
-
-                                                <template v-if="showFilters">
-                                                    <select class="pl-search form-control form-input form-input-bordered w-full" v-model="filterBy" @change="filterFiles">
-                                                        <option value="">{{ __('Filter by ...') }}</option>
-                                                        <option v-for="(filter, key) in filters" :key="'filter_' + key" :value="key">{{ key }}</option>
-                                                    </select>    
-                                                </template>
-                                                
-                                            </div>
-                                        </div>
+                <div class="flex flex-wrap">
+                    <div class="card relative w-full">
+                        <div class="p-3 flex flex-wrap items-center border-b border-50">
+                            <div class="w-auto flex flex-wrap justify-start">
+                                <label v-if="buttons.upload_button" class="manual_upload cursor-pointer">
+                                    <div @click="showUpload = !showUpload" class="btn btn-default btn-primary mr-3">
+                                        {{ __('Upload') }}
                                     </div>
+                                    <input type="file" multiple="true" @change="uploadFilesByButton"/>
+                                </label>
 
-                                    <div class="relative w-1/2 max-w-xs">
-                                        <div class="relative">
-                                            <div class="relative">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" aria-labelledby="search" role="presentation" class="fill-current absolute search-icon-center ml-3 text-70"><path fill-rule="nonzero" d="M14.32 12.906l5.387 5.387a1 1 0 0 1-1.414 1.414l-5.387-5.387a8 8 0 1 1 1.414-1.414zM8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12z"></path></svg>
-                                                <input v-on:input="searchItems" v-model="search" dusk="filemanager-search" type="search" :placeholder="this.__('Search')" class="pl-search form-control form-input form-input-bordered w-full">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                <button  v-if="buttons.create_folder" @click="showModalCreateFolder" class="btn btn-default btn-primary mr-3">
+                                    {{ __('Create folder') }}
+                                </button>
 
+                                <button v-if="view == 'list'" @click="viewAs('grid')" class="btn btn-default btn-small btn-primary text-white mr-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path class="heroicon-ui" d="M5 3h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2zm0 2v4h4V5H5zm10-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2zm0 2v4h4V5h-4zM5 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4c0-1.1.9-2 2-2zm0 2v4h4v-4H5zm10-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4c0-1.1.9-2 2-2zm0 2v4h4v-4h-4z"/></svg>
+                                </button>
+
+                                <button v-if="view == 'grid'" @click="viewAs('list')" class="btn btn-default btn-small btn-primary text-white mr-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20"><path d="M1 4h2v2H1V4zm4 0h14v2H5V4zM1 9h2v2H1V9zm4 0h14v2H5V9zm-4 5h2v2H1v-2zm4 0h14v2H5v-2z"/></svg>
+                                </button>
                             </div>
 
-                            
-                            <manager 
-                                ref="manager"
-                                :home="home"
-                                :files="files"
-                                :path="path"
-                                :current="currentPath"
-                                :parent="parent"
-                                :noFiles="noFiles"
-                                :view="view"
-                                :selector="value"
-                                :popupLoaded="true"
-                                :loading="loadingfiles"
-                                :search="search"
-                                :filters="filteredExtensions"
-                                v-on:goToFolderManager="goToFolder"
-                                v-on:goToFolderManagerNav="goToFolderNav"
-                                v-on:refresh="refreshCurrent"
-                                v-on:selectFile="setFileValue"
-                                v-on:showInfoItem="showInfoItem"
-                                v-on:uploadFiles="uploadFiles"
-                                v-on:rename="openRenameModal"
-                                v-on:delete="openDeleteModal"
-                            />
+                            <!-- Search -->
+                            <div class="w-auto flex flex-1 flex-wrap justify-end">
+                                <div class="relative w-1/3 max-w-xs mr-3">
+                                    <div class="relative">
+                                        <div class="relative">
+                                            <template v-if="showFilters">
+                                                <select class="pl-search form-control form-input form-input-bordered w-full" v-model="filterBy">
+                                                    <option value>{{ __('Filter by ...') }}</option>
+                                                    <option v-for="(filter, key) in filters" :key="'filter_' + key" :value="key">{{ key }}</option>
+                                                </select>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
 
-                            <rename-modal ref="renameModal" v-on:refresh="refreshCurrent" />
+                                <div class="relative w-1/2 max-w-xs">
+                                    <div class="relative">
+                                        <div class="relative">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" aria-labelledby="search" role="presentation" class="fill-current absolute search-icon-center ml-3 text-70"><path fill-rule="nonzero" d="M14.32 12.906l5.387 5.387a1 1 0 0 1-1.414 1.414l-5.387-5.387a8 8 0 1 1 1.414-1.414zM8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12z"></path></svg>
+                                            <input v-on:input="searchItems" v-model="search" dusk="filemanager-search" type="search" :placeholder="this.__('Search')" class="pl-search form-control form-input form-input-bordered w-full">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
-                            <confirm-modal-delete ref="confirmDelete" v-on:refresh="refreshCurrent" />
-				            
-                            <div class="p-3  flex flex-wrap items-center border-b border-50">
+                        <manager
+                            ref="manager"
+                            :home="home"
+                            :files="files"
+                            :path="path"
+                            :current="currentPath"
+                            :parent="parent"
+                            :view="view"
+                            :selector="value"
+                            :popupLoaded="true"
+                            :loading="loadingfiles"
+                            :search="search"
+                            :filter="filter"
+                            :filters="filteredExtensions"
+                            :buttons="buttons"
+                            v-on:goToFolderManager="goToFolder"
+                            v-on:goToFolderManagerNav="goToFolderNav"
+                            v-on:refresh="refreshCurrent"
+                            v-on:selectFile="setFileValue"
+                            v-on:showInfoItem="showInfoItem"
+                            v-on:uploadFiles="uploadFiles"
+                            v-on:rename="openRenameModal"
+                            v-on:delete="openDeleteModal"
+                        />
+
+                        <rename-modal ref="renameModal" v-on:refresh="refreshCurrent" />
+
+                        <confirm-modal-delete ref="confirmDelete" v-on:refresh="refreshCurrent" />
+                        <div class="p-3  flex flex-wrap items-center border-b border-50">
                                 
-                                <button @click="prevPage" class="btn btn-default btn-primary mr-3">
-                                    {{ __('Forrige') }}
-                                </button>
+                            <button @click="prevPage" class="btn btn-default btn-primary mr-3">
+                                {{ __('Forrige') }}
+                            </button>
 
-                                <button @click="nextPage" class="btn btn-default btn-primary mr-3">
-                                    {{ __('Næste') }}
-                                </button>
+                            <button @click="nextPage" class="btn btn-default btn-primary mr-3">
+                                {{ __('Næste') }}
+                            </button>
 
-                            </div>
                         </div>
                     </div>
                 </div>
-            </modal>
-        </transition>
+            </div>
+        </modal>
     </portal>
 </template>
 
@@ -170,16 +159,25 @@ export default {
         filter: {
             type: String,
             required: false,
-            default: '',
+            default: null,
+        },
+        buttons: {
+            default: () => [],
+            required: true,
+        },
+        rules: {
+            type: Array,
+            default: () => [],
+            required: false,
         },
     },
 
     components: {
-        upload: Upload,
-        manager: Manager,
-        UploadProgress: UploadProgress,
-        'rename-modal': RenameModal,
-        'confirm-modal-delete': ConfirmModalDelete,
+        ConfirmModalDelete,
+        Manager,
+        RenameModal,
+        Upload,
+        UploadProgress,
     },
 
     data: () => ({
@@ -194,38 +192,44 @@ export default {
         files: [],
         parent: {},
         path: [],
-        noFiles: false,
         view: 'grid',
         filesToUpload: [],
         firstTime: true,
         search: '',
         filters: [],
         filterBy: '',
-        filteredExtensions: [],
         showFilters: false,
         limit: 10,
         offset: 0,
         allFiles: []
     }),
 
+    computed: {
+        filteredExtensions() {
+            const filter = _.get(this.filters, this.filterBy);
+
+            if (filter) {
+                return filter;
+            }
+
+            return [];
+        },
+    },
+
     methods: {
-        getData(pathToList) {
+        getData(folder) {
             this.files = [];
             this.parent = {};
             this.path = [];
-            this.noFiles = false;
             this.loadingfiles = true;
-            api.getDataField(this.resource, this.name, pathToList, this.limit, this.offset)
+
+            api.getDataField(this.resource, this.name, folder, this.filter,  this.limit, this.offset)
                 .then(result => {
-                    if (_.size(result.files) == 0) {
-                        this.noFiles = true;
-                    }
-                    this.allFiles = result.files;
                     this.files = result.files.slice(this.offset, this.offset+this.limit);
                     this.path = result.path;
                     this.filters = result.filters;
 
-                    if (pathToList != this.defaultFolder) {
+                    if (folder != this.defaultFolder) {
                         this.parent = result.parent;
                     }
 
@@ -316,43 +320,37 @@ export default {
             this.$refs.confirmDelete.openModal(type, path);
         },
 
-        filterFiles() {
-            let extensions = _.get(this.filters, this.filterBy);
-
-            if (extensions == null) {
-                this.filteredExtensions = [];
-            }
-
-            if (extensions != null && extensions.length > 0) {
-                this.filteredExtensions = extensions;
-            }
-        },
-
         searchItems: _.debounce(function(e) {
             this.search = e.target.value;
         }, 300),
     },
+
     watch: {
-        active: function(val) {
+        active(val) {
             if (val) {
-                let currentUrl = new URI();
+                const currentUrl = new URI();
+
                 if (currentUrl.hasQuery('path')) {
-                    let params = currentUrl.query(true);
+                    const params = currentUrl.query(true);
+
                     this.currentPath = params.path;
                 }
                 this.offset = 0;
                 this.getData(this.currentPath);
             }
         },
-        currentPathFolder: function(val) {
+
+        currentPathFolder(val) {
             this.$emit('update-current-path', val);
         },
 
         filters() {
             if (this.filters) {
-                let size = _.size(this.filters);
+                const size = _.size(this.filters);
+
                 if (size > 1) {
                     this.showFilters = true;
+
                     return true;
                 }
             }
@@ -363,9 +361,10 @@ export default {
 
     created() {
         if (localStorage.getItem('nova-filemanager-view')) {
-            let viewS = localStorage.getItem('nova-filemanager-view');
-            if (['grid', 'list'].includes(viewS)) {
-                this.view = viewS;
+            const view = localStorage.getItem('nova-filemanager-view');
+
+            if (['grid', 'list'].includes(view)) {
+                this.view = view;
             } else {
                 localStorage.setItem('nova-filemanager-view', 'grid');
             }

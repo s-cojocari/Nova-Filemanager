@@ -1,5 +1,5 @@
 <template>
-    <portal to="portal-filemanager" name="Confirm Delete" transition="fade-transition">
+    <portal to="portal-filemanager" name="Remove Multi" transition="fade-transition">
         <modal v-if="active" @modal-close="handleClose">
             <div
                 class="bg-white rounded-lg shadow-lg overflow-hidden"
@@ -7,22 +7,10 @@
             >
                 <div class="p-8">
                     <heading :level="2" class="mb-6">
-                        <template v-if="type == 'folder'">
-                            {{ __('Remove folder') }}: {{ name }}
-                        </template>
-                        <template v-else>
-                            {{ __('Remove file') }}: {{ name }}
-                        </template>
+                        {{ __('Remove selected?') }}
                     </heading>
-                    <template v-if="type == 'folder'">
-                        <p class="text-80">{{__('Are you sure you want to remove this folder?')}}</p>
-                        <p class="text-sm text-80 mt-2">{{ __('Remember: The folder and all his contents will be delete from your storage') }}</p>
-                    </template>
-                    <template v-else>
-                        <p class="text-80">{{__('Are you sure you want to remove this file?')}}</p>
-                        <p class="text-sm text-80 mt-2">{{ __('Remember: The file will be delete from your storage') }}</p>
-                    </template>
-                    
+                    <p class="text-80">{{__('Are you sure you want to remove selected files or folders?')}}</p>
+                    <p class="text-sm text-80 mt-2">{{ __('Remember: The file and folder and all his contents will be delete from your storage') }}</p>
                 </div>
 
                 <div class="bg-30 px-6 py-3 flex">
@@ -43,21 +31,22 @@
 import api from '../api';
 
 export default {
+    props: {
+        selectedFiles: {
+            type: Array,
+            required: true,
+        },
+    },
+
     data: () => ({
         active: false,
-        name: null,
-        type: null,
-        path: null,
         error: false,
         errorMsg: '',
         isDeleting: false,
     }),
 
     methods: {
-        openModal(type, path) {
-            this.type = type;
-            this.path = path;
-            this.name = path.replace(/^.*[\\/]/, '');
+        openModal() {
             this.active = true;
         },
 
@@ -65,22 +54,27 @@ export default {
             this.active = false;
         },
 
-        deleteData() {
-            if (this.type == 'folder') {
-                this.deleteFolder();
-            } else {
-                this.deleteFile();
+        async deleteData() {
+            this.isDeleting = true;
+
+            for (const file of this.selectedFiles) {
+                if (file.type == 'dir') {
+                    await this.deleteFolder(file);
+                } else {
+                    await this.deleteFile(file);
+                }
             }
+
+            this.isDeleting = false;
+            this.$emit('refresh', true);
+            this.handleClose();
         },
 
-        deleteFolder() {
-            return api.removeDirectory(this.path).then(result => {
+        deleteFolder(file) {
+            return api.removeDirectory(file.path).then(result => {
                 this.error = false;
-                this.name = null;
                 if (result == true) {
                     this.$toasted.show(this.__('Deleted successfully'), { type: 'success' });
-                    this.$emit('refresh', true);
-                    this.handleClose();
                 } else {
                     this.error = true;
                     if (result.error) {
@@ -97,14 +91,11 @@ export default {
             });
         },
 
-        deleteFile() {
-            return api.removeFile(this.path).then(result => {
+        deleteFile(file) {
+            return api.removeFile(file.path).then(result => {
                 this.error = false;
-                this.name = null;
                 if (result == true) {
                     this.$toasted.show(this.__('Deleted successfully'), { type: 'success' });
-                    this.$emit('refresh', true);
-                    this.handleClose();
                 } else {
                     this.error = true;
                     if (result.error) {
