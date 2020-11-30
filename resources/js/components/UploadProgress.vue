@@ -64,6 +64,12 @@ export default {
             type: String,
             default: 'public',
         },
+
+        rules: {
+            type: Array,
+            default: () => [],
+            required: false,
+        },
     },
 
     components: {
@@ -125,10 +131,11 @@ export default {
 
             let data = new FormData();
             data.append('file', file.file);
-            data.append('current', this.current + filePath);
+            data.append('current', this.current + '/' + filePath);
             data.append('visibility', this.visibility);
 
             if (this.type == 'files') {
+                data.append('rules', JSON.stringify(this.rules));
                 this.uploadFileToServer(file, data, config);
             } else {
                 this.uploadFolderToServer(file, data, config);
@@ -159,12 +166,24 @@ export default {
                         );
                     }
                 })
-                .catch(() => {
+                .catch(error => {
+                    if (error.response.data.errors) {
+                        let errors = error.response.data.errors;
+                        let errorsArray = Object.values(errors).flat();
+
+                        let errorMessage = errorsArray.join('<br>');
+
+                        this.$toasted.show(errorMessage, { type: 'error' });
+                    } else {
+                        this.$toasted.show(
+                            this.__(
+                                'Error uploading the file. Check your MaxFilesize or permissions'
+                            ),
+                            { type: 'error' }
+                        );
+                    }
+
                     file.error = true;
-                    this.$toasted.show(
-                        this.__('Error uploading the file. Check your MaxFilesize or permissions'),
-                        { type: 'error' }
-                    );
 
                     setTimeout(() => {
                         this.$emit('removeFile', file.id);

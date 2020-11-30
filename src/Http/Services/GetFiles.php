@@ -4,8 +4,8 @@ namespace Infinety\Filemanager\Http\Services;
 
 use Carbon\Carbon;
 use GuzzleHttp\Client;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 trait GetFiles
 {
@@ -339,7 +339,7 @@ trait GetFiles
     public function getImageDimesions($file)
     {
         if ($this->disk == 'public') {
-            return getimagesize($this->storage->path($file['path']));
+            return @getimagesize($this->storage->path($file['path']));
         }
 
         if (in_array(config('filemanager.disk'), $this->cloudDisks)) {
@@ -436,7 +436,7 @@ trait GetFiles
         if ($paths) {
             $folderPath = $paths->implode('/');
 
-            if ($folderPath == $folder) {
+            if ($folderPath == $folder || strlen($folderPath) === 0) {
                 $folderPath = '/';
             }
 
