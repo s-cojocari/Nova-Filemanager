@@ -93459,6 +93459,8 @@ Nova.booting(function (Vue) {
     Vue.component('index-filemanager-field', __webpack_require__(270));
     Vue.component('detail-filemanager-field', __webpack_require__(275));
     Vue.component('form-filemanager-field', __webpack_require__(281));
+
+    Vue.config.devtools = true;
 });
 
 /***/ }),
