@@ -276,6 +276,18 @@ export default {
             default: () => [],
             required: true,
         },
+        allFiles: {
+            default: () => [],
+            required: true,
+        },
+        limit: {
+            default: 10,
+            required: true,
+        },
+        offset: {
+            default: 0,
+            required: true,
+        }
     },
 
     data: () => ({
@@ -647,9 +659,9 @@ export default {
 
         filteredFiles() {
             let filtered = this.files;
-
             if (this.search) {
-                filtered = this.files.filter(m => m.name.toLowerCase().indexOf(this.search) > -1);
+                filtered = this.allFiles.filter(m => m.name.toLowerCase().indexOf(this.search) > -1);
+                filtered = filtered.slice(this.offset, this.offset+this.limit);
             }
 
             if (this.filters.length > 0) {
