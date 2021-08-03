@@ -239,11 +239,9 @@ export default {
                         this.parent = result.parent;
                     }
 
+                    this.displayNextButton = true;
                     if (result.files.length <= this.limit) {
                         this.displayNextButton = false;
-                    }
-                    else {
-                        this.displayNextButton = true;
                     }
 
                     this.allFiles = result.files;

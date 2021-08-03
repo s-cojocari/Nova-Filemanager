@@ -94816,10 +94816,9 @@ var _this = this;
                     _this2.parent = result.parent;
                 }
 
+                _this2.displayNextButton = true;
                 if (result.files.length <= _this2.limit) {
                     _this2.displayNextButton = false;
-                } else {
-                    _this2.displayNextButton = true;
                 }
 
                 _this2.allFiles = result.files;
