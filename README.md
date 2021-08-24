@@ -7,6 +7,8 @@
 
 A Filemanager Tool and Field for Laravel Nova
 
+##### Current Nova FilemanagerField supports Pagination (Prev/Next button)
+
 ##### Filemanager Tool preview
 
 ![FileManager Tool](https://user-images.githubusercontent.com/42798230/44862985-d3d57b80-ac73-11e8-9169-2e76a3584ea4.gif)

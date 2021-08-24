@@ -82,6 +82,9 @@
                             :filter="filter"
                             :filters="filteredExtensions"
                             :buttons="buttons"
+                            :allFiles="allFiles"
+                            :limit="limit"
+                            :offset="offset"
                             v-on:goToFolderManager="goToFolder"
                             v-on:goToFolderManagerNav="goToFolderNav"
                             v-on:refresh="refreshCurrent"
@@ -96,12 +99,12 @@
 
                         <confirm-modal-delete ref="confirmDelete" v-on:refresh="refreshCurrent" />
                         <div class="p-3  flex flex-wrap items-center border-b border-50">
-                                
-                            <button @click="prevPage" class="btn btn-default btn-primary mr-3">
+
+                            <button v-if="displayPrevButton" @click="prevPage" class="btn btn-default btn-primary mr-3">
                                 {{ __('Forrige') }}
                             </button>
 
-                            <button @click="nextPage" class="btn btn-default btn-primary mr-3">
+                            <button v-if="displayNextButton" @click="nextPage" class="btn btn-default btn-primary mr-3">
                                 {{ __('Næste') }}
                             </button>
 
@@ -201,7 +204,10 @@ export default {
         showFilters: false,
         limit: 10,
         offset: 0,
-        allFiles: []
+        allFiles: [],
+        displayNextButton: false,
+        displayPrevButton: false
+
     }),
 
     computed: {
@@ -233,6 +239,12 @@ export default {
                         this.parent = result.parent;
                     }
 
+                    this.displayNextButton = true;
+                    if (result.files.length <= this.limit) {
+                        this.displayNextButton = false;
+                    }
+
+                    this.allFiles = result.files;
                     this.loadingfiles = false;
                 })
                 .catch(() => {
@@ -247,12 +259,26 @@ export default {
 
         nextPage(){
             this.offset += this.limit;
-            this.files = this.allFiles.slice(this.offset, this.offset+this.limit)
+            this.files = this.allFiles.slice(this.offset, this.offset+this.limit);
+            if (this.allFiles.length < this.offset+this.limit) {
+                this.displayNextButton = false;
+            }
+
+            if (this.offset+this.limit > this.limit) {
+                this.displayPrevButton = true;
+            }
         },
 
         prevPage(){
             this.offset -= this.limit;
             this.files = this.allFiles.slice(this.offset, this.offset+this.limit)
+
+            if (this.offset < this.allFiles.length) {
+                this.displayNextButton = true;
+            }
+            if (this.offset == 0) {
+                this.displayPrevButton = false;
+            }
         },
 
         showModalCreateFolder() {
