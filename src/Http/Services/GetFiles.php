@@ -465,6 +465,7 @@ trait GetFiles
      */
     public function getPaths($currentFolder)
     {
+        dd(Storage::disk(config('filesystems.default'))->getAdapter());
         // $defaultPath = $this->cleanSlashes($this->storage->getDriver()->getAdapter()->getPathPrefix());
         $defaultPath = $this->cleanSlashes(Storage::disk(config('filesystems.default'))->getAdapter()->getPathPrefix());
         $currentPath = $this->cleanSlashes($this->storage->path($currentFolder));
