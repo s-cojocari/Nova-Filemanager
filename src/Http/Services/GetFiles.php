@@ -196,7 +196,7 @@ trait GetFiles
      */
     public function setRelativePath($folder)
     {
-        dd(get_class_methods( Storage::disk( config('filesystems.default') )->getDriver()->getAdapter() ) );
+        dd(get_class_methods( Storage::disk( config('filesystems.default') )->getAdapter() ) );
         // $defaultPath = $this->storage->getDriver()->getAdapter()->getPathPrefix();
         $defaultPath = Storage::disk(config('filesystems.default'))->getAdapter()->getPathPrefix();
 
