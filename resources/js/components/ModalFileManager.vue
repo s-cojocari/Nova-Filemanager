@@ -209,15 +209,13 @@ export default {
             this.path = [];
             this.loadingfiles = true;
 
-            api.getDataField(this.resource, this.name, folder, this.filter)
+            api.getData(folder)
                 .then(result => {
                     this.files = result.files;
                     this.path = result.path;
                     this.filters = result.filters;
-
-                    if (folder != this.defaultFolder) {
-                        this.parent = result.parent;
-                    }
+                    this.parent = result.parent;
+                    this.buttons = result.buttons;
 
                     this.loadingfiles = false;
                 })

@@ -68,9 +68,9 @@
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
-// This is CodeMirror (https://codemirror.net), a code editor
+// This is CodeMirror (https://codemirror.net/5), a code editor
 // implemented in JavaScript on top of the browser's DOM.
 //
 // You can find some technical background for some of the code below
@@ -95,7 +95,8 @@
   var ie_version = ie && (ie_upto10 ? document.documentMode || 6 : +(edge || ie_11up)[1]);
   var webkit = !edge && /WebKit\//.test(userAgent);
   var qtwebkit = webkit && /Qt\/\d+\.\d+/.test(userAgent);
-  var chrome = !edge && /Chrome\//.test(userAgent);
+  var chrome = !edge && /Chrome\/(\d+)/.exec(userAgent);
+  var chrome_version = chrome && +chrome[1];
   var presto = /Opera\//.test(userAgent);
   var safari = /Apple Computer/.test(navigator.vendor);
   var mac_geMountainLion = /Mac OS X 1\d\D([8-9]|\d\d)\D/.test(userAgent);
@@ -180,15 +181,15 @@
     } while (child = child.parentNode)
   }
 
-  function activeElt() {
+  function activeElt(doc) {
     // IE and Edge may throw an "Unspecified Error" when accessing document.activeElement.
     // IE < 10 will throw when accessed while the page is loading or in an iframe.
     // IE > 9 and Edge will throw when accessed in an iframe if document.body is unavailable.
     var activeElement;
     try {
-      activeElement = document.activeElement;
+      activeElement = doc.activeElement;
     } catch(e) {
-      activeElement = document.body || null;
+      activeElement = doc.body || null;
     }
     while (activeElement && activeElement.shadowRoot && activeElement.shadowRoot.activeElement)
       { activeElement = activeElement.shadowRoot.activeElement; }
@@ -211,6 +212,10 @@
     { selectInput = function(node) { node.selectionStart = 0; node.selectionEnd = node.value.length; }; }
   else if (ie) // Suppress mysterious IE10 errors
     { selectInput = function(node) { try { node.select(); } catch(_e) {} }; }
+
+  function doc(cm) { return cm.display.wrapper.ownerDocument }
+
+  function win(cm) { return doc(cm).defaultView }
 
   function bind(f) {
     var args = Array.prototype.slice.call(arguments, 1);
@@ -1393,7 +1398,7 @@
   // Add a span to a line.
   function addMarkedSpan(line, span, op) {
     var inThisOp = op && window.WeakSet && (op.markedSpans || (op.markedSpans = new WeakSet));
-    if (inThisOp && inThisOp.has(line.markedSpans)) {
+    if (inThisOp && line.markedSpans && inThisOp.has(line.markedSpans)) {
       line.markedSpans.push(span);
     } else {
       line.markedSpans = line.markedSpans ? line.markedSpans.concat([span]) : [span];
@@ -2420,12 +2425,14 @@
   function mapFromLineView(lineView, line, lineN) {
     if (lineView.line == line)
       { return {map: lineView.measure.map, cache: lineView.measure.cache} }
-    for (var i = 0; i < lineView.rest.length; i++)
-      { if (lineView.rest[i] == line)
-        { return {map: lineView.measure.maps[i], cache: lineView.measure.caches[i]} } }
-    for (var i$1 = 0; i$1 < lineView.rest.length; i$1++)
-      { if (lineNo(lineView.rest[i$1]) > lineN)
-        { return {map: lineView.measure.maps[i$1], cache: lineView.measure.caches[i$1], before: true} } }
+    if (lineView.rest) {
+      for (var i = 0; i < lineView.rest.length; i++)
+        { if (lineView.rest[i] == line)
+          { return {map: lineView.measure.maps[i], cache: lineView.measure.caches[i]} } }
+      for (var i$1 = 0; i$1 < lineView.rest.length; i$1++)
+        { if (lineNo(lineView.rest[i$1]) > lineN)
+          { return {map: lineView.measure.maps[i$1], cache: lineView.measure.caches[i$1], before: true} } }
+    }
   }
 
   // Render a line into the hidden node display.externalMeasured. Used
@@ -2639,22 +2646,24 @@
     cm.display.lineNumChars = null;
   }
 
-  function pageScrollX() {
+  function pageScrollX(doc) {
     // Work around https://bugs.chromium.org/p/chromium/issues/detail?id=489206
     // which causes page_Offset and bounding client rects to use
     // different reference viewports and invalidate our calculations.
-    if (chrome && android) { return -(document.body.getBoundingClientRect().left - parseInt(getComputedStyle(document.body).marginLeft)) }
-    return window.pageXOffset || (document.documentElement || document.body).scrollLeft
+    if (chrome && android) { return -(doc.body.getBoundingClientRect().left - parseInt(getComputedStyle(doc.body).marginLeft)) }
+    return doc.defaultView.pageXOffset || (doc.documentElement || doc.body).scrollLeft
   }
-  function pageScrollY() {
-    if (chrome && android) { return -(document.body.getBoundingClientRect().top - parseInt(getComputedStyle(document.body).marginTop)) }
-    return window.pageYOffset || (document.documentElement || document.body).scrollTop
+  function pageScrollY(doc) {
+    if (chrome && android) { return -(doc.body.getBoundingClientRect().top - parseInt(getComputedStyle(doc.body).marginTop)) }
+    return doc.defaultView.pageYOffset || (doc.documentElement || doc.body).scrollTop
   }
 
   function widgetTopHeight(lineObj) {
+    var ref = visualLine(lineObj);
+    var widgets = ref.widgets;
     var height = 0;
-    if (lineObj.widgets) { for (var i = 0; i < lineObj.widgets.length; ++i) { if (lineObj.widgets[i].above)
-      { height += widgetHeight(lineObj.widgets[i]); } } }
+    if (widgets) { for (var i = 0; i < widgets.length; ++i) { if (widgets[i].above)
+      { height += widgetHeight(widgets[i]); } } }
     return height
   }
 
@@ -2674,8 +2683,8 @@
     else { yOff -= cm.display.viewOffset; }
     if (context == "page" || context == "window") {
       var lOff = cm.display.lineSpace.getBoundingClientRect();
-      yOff += lOff.top + (context == "window" ? 0 : pageScrollY());
-      var xOff = lOff.left + (context == "window" ? 0 : pageScrollX());
+      yOff += lOff.top + (context == "window" ? 0 : pageScrollY(doc(cm)));
+      var xOff = lOff.left + (context == "window" ? 0 : pageScrollX(doc(cm)));
       rect.left += xOff; rect.right += xOff;
     }
     rect.top += yOff; rect.bottom += yOff;
@@ -2689,8 +2698,8 @@
     var left = coords.left, top = coords.top;
     // First move into "page" coordinate system
     if (context == "page") {
-      left -= pageScrollX();
-      top -= pageScrollY();
+      left -= pageScrollX(doc(cm));
+      top -= pageScrollY(doc(cm));
     } else if (context == "local" || !context) {
       var localBox = cm.display.sizer.getBoundingClientRect();
       left += localBox.left;
@@ -3219,13 +3228,19 @@
     var curFragment = result.cursors = document.createDocumentFragment();
     var selFragment = result.selection = document.createDocumentFragment();
 
+    var customCursor = cm.options.$customCursor;
+    if (customCursor) { primary = true; }
     for (var i = 0; i < doc.sel.ranges.length; i++) {
       if (!primary && i == doc.sel.primIndex) { continue }
       var range = doc.sel.ranges[i];
       if (range.from().line >= cm.display.viewTo || range.to().line < cm.display.viewFrom) { continue }
       var collapsed = range.empty();
-      if (collapsed || cm.options.showCursorWhenSelecting)
-        { drawSelectionCursor(cm, range.head, curFragment); }
+      if (customCursor) {
+        var head = customCursor(cm, range);
+        if (head) { drawSelectionCursor(cm, head, curFragment); }
+      } else if (collapsed || cm.options.showCursorWhenSelecting) {
+        drawSelectionCursor(cm, range.head, curFragment);
+      }
       if (!collapsed)
         { drawSelectionRange(cm, range, selFragment); }
     }
@@ -3240,6 +3255,12 @@
     cursor.style.left = pos.left + "px";
     cursor.style.top = pos.top + "px";
     cursor.style.height = Math.max(0, pos.bottom - pos.top) * cm.options.cursorHeight + "px";
+
+    if (/\bcm-fat-cursor\b/.test(cm.getWrapperElement().className)) {
+      var charPos = charCoords(cm, head, "div", null, null);
+      var width = charPos.right - charPos.left;
+      cursor.style.width = (width > 0 ? width : cm.defaultCharWidth()) + "px";
+    }
 
     if (pos.other) {
       // Secondary cursor, shown when on a 'jump' in bi-directional text
@@ -3413,10 +3434,14 @@
   function updateHeightsInViewport(cm) {
     var display = cm.display;
     var prevBottom = display.lineDiv.offsetTop;
+    var viewTop = Math.max(0, display.scroller.getBoundingClientRect().top);
+    var oldHeight = display.lineDiv.getBoundingClientRect().top;
+    var mustScroll = 0;
     for (var i = 0; i < display.view.length; i++) {
       var cur = display.view[i], wrapping = cm.options.lineWrapping;
       var height = (void 0), width = 0;
       if (cur.hidden) { continue }
+      oldHeight += cur.line.height;
       if (ie && ie_version < 8) {
         var bot = cur.node.offsetTop + cur.node.offsetHeight;
         height = bot - prevBottom;
@@ -3431,6 +3456,7 @@
       }
       var diff = cur.line.height - height;
       if (diff > .005 || diff < -.005) {
+        if (oldHeight < viewTop) { mustScroll -= diff; }
         updateLineHeight(cur.line, height);
         updateWidgetHeight(cur.line);
         if (cur.rest) { for (var j = 0; j < cur.rest.length; j++)
@@ -3445,6 +3471,7 @@
         }
       }
     }
+    if (Math.abs(mustScroll) > 2) { display.scroller.scrollTop += mustScroll; }
   }
 
   // Read and store the height of line widgets associated with the
@@ -3488,8 +3515,9 @@
     if (signalDOMEvent(cm, "scrollCursorIntoView")) { return }
 
     var display = cm.display, box = display.sizer.getBoundingClientRect(), doScroll = null;
+    var doc = display.wrapper.ownerDocument;
     if (rect.top + box.top < 0) { doScroll = true; }
-    else if (rect.bottom + box.top > (window.innerHeight || document.documentElement.clientHeight)) { doScroll = false; }
+    else if (rect.bottom + box.top > (doc.defaultView.innerHeight || doc.documentElement.clientHeight)) { doScroll = false; }
     if (doScroll != null && !phantom) {
       var scrollNode = elt("div", "\u200b", null, ("position: absolute;\n                         top: " + (rect.top - display.viewOffset - paddingTop(cm.display)) + "px;\n                         height: " + (rect.bottom - rect.top + scrollGap(cm) + display.barHeight) + "px;\n                         left: " + (rect.left) + "px; width: " + (Math.max(2, rect.right - rect.left)) + "px;"));
       cm.display.lineSpace.appendChild(scrollNode);
@@ -3705,6 +3733,7 @@
       this.vert.firstChild.style.height =
         Math.max(0, measure.scrollHeight - measure.clientHeight + totalHeight) + "px";
     } else {
+      this.vert.scrollTop = 0;
       this.vert.style.display = "";
       this.vert.firstChild.style.height = "0";
     }
@@ -3742,13 +3771,13 @@
   NativeScrollbars.prototype.zeroWidthHack = function () {
     var w = mac && !mac_geMountainLion ? "12px" : "18px";
     this.horiz.style.height = this.vert.style.width = w;
-    this.horiz.style.pointerEvents = this.vert.style.pointerEvents = "none";
+    this.horiz.style.visibility = this.vert.style.visibility = "hidden";
     this.disableHoriz = new Delayed;
     this.disableVert = new Delayed;
   };
 
   NativeScrollbars.prototype.enableZeroWidthBar = function (bar, delay, type) {
-    bar.style.pointerEvents = "auto";
+    bar.style.visibility = "";
     function maybeDisable() {
       // To find out whether the scrollbar is still visible, we
       // check whether the element under the pixel in the bottom
@@ -3759,7 +3788,7 @@
       var box = bar.getBoundingClientRect();
       var elt = type == "vert" ? document.elementFromPoint(box.right - 1, (box.top + box.bottom) / 2)
           : document.elementFromPoint((box.right + box.left) / 2, box.bottom - 1);
-      if (elt != bar) { bar.style.pointerEvents = "none"; }
+      if (elt != bar) { bar.style.visibility = "hidden"; }
       else { delay.set(1000, maybeDisable); }
     }
     delay.set(1000, maybeDisable);
@@ -3940,7 +3969,7 @@
       cm.display.maxLineChanged = false;
     }
 
-    var takeFocus = op.focus && op.focus == activeElt();
+    var takeFocus = op.focus && op.focus == activeElt(doc(cm));
     if (op.preparedSelection)
       { cm.display.input.showSelection(op.preparedSelection, takeFocus); }
     if (op.updatedDisplay || op.startHeight != cm.doc.height)
@@ -4117,11 +4146,11 @@
 
   function selectionSnapshot(cm) {
     if (cm.hasFocus()) { return null }
-    var active = activeElt();
+    var active = activeElt(doc(cm));
     if (!active || !contains(cm.display.lineDiv, active)) { return null }
     var result = {activeElt: active};
     if (window.getSelection) {
-      var sel = window.getSelection();
+      var sel = win(cm).getSelection();
       if (sel.anchorNode && sel.extend && contains(cm.display.lineDiv, sel.anchorNode)) {
         result.anchorNode = sel.anchorNode;
         result.anchorOffset = sel.anchorOffset;
@@ -4133,11 +4162,12 @@
   }
 
   function restoreSelection(snapshot) {
-    if (!snapshot || !snapshot.activeElt || snapshot.activeElt == activeElt()) { return }
+    if (!snapshot || !snapshot.activeElt || snapshot.activeElt == activeElt(snapshot.activeElt.ownerDocument)) { return }
     snapshot.activeElt.focus();
     if (!/^(INPUT|TEXTAREA)$/.test(snapshot.activeElt.nodeName) &&
         snapshot.anchorNode && contains(document.body, snapshot.anchorNode) && contains(document.body, snapshot.focusNode)) {
-      var sel = window.getSelection(), range = document.createRange();
+      var doc = snapshot.activeElt.ownerDocument;
+      var sel = doc.defaultView.getSelection(), range = doc.createRange();
       range.setEnd(snapshot.anchorNode, snapshot.anchorOffset);
       range.collapse(false);
       sel.removeAllRanges();
@@ -4454,6 +4484,12 @@
     d.scroller.setAttribute("tabIndex", "-1");
     // The element in which the editor lives.
     d.wrapper = elt("div", [d.scrollbarFiller, d.gutterFiller, d.scroller], "CodeMirror");
+    // See #6982. FIXME remove when this has been fixed for a while in Chrome
+    if (chrome && chrome_version >= 105) { d.wrapper.style.clipPath = "inset(0px)"; }
+
+    // This attribute is respected by automatic translation systems such as Google Translate,
+    // and may also be respected by tools used by human translators.
+    d.wrapper.setAttribute('translate', 'no');
 
     // Work around IE7 z-index bug (not perfect, hence IE7 not really being supported)
     if (ie && ie_version < 8) { d.gutters.style.zIndex = -1; d.scroller.style.paddingRight = 0; }
@@ -4551,7 +4587,24 @@
   }
 
   function onScrollWheel(cm, e) {
+    // On Chrome 102, viewport updates somehow stop wheel-based
+    // scrolling. Turning off pointer events during the scroll seems
+    // to avoid the issue.
+    if (chrome && chrome_version == 102) {
+      if (cm.display.chromeScrollHack == null) { cm.display.sizer.style.pointerEvents = "none"; }
+      else { clearTimeout(cm.display.chromeScrollHack); }
+      cm.display.chromeScrollHack = setTimeout(function () {
+        cm.display.chromeScrollHack = null;
+        cm.display.sizer.style.pointerEvents = "";
+      }, 100);
+    }
     var delta = wheelEventDelta(e), dx = delta.x, dy = delta.y;
+    var pixelsPerUnit = wheelPixelsPerUnit;
+    if (e.deltaMode === 0) {
+      dx = e.deltaX;
+      dy = e.deltaY;
+      pixelsPerUnit = 1;
+    }
 
     var display = cm.display, scroll = display.scroller;
     // Quit if there's nothing to scroll here
@@ -4580,10 +4633,10 @@
     // estimated pixels/delta value, we just handle horizontal
     // scrolling entirely here. It'll be slightly off from native, but
     // better than glitching out.
-    if (dx && !gecko && !presto && wheelPixelsPerUnit != null) {
+    if (dx && !gecko && !presto && pixelsPerUnit != null) {
       if (dy && canScrollY)
-        { updateScrollTop(cm, Math.max(0, scroll.scrollTop + dy * wheelPixelsPerUnit)); }
-      setScrollLeft(cm, Math.max(0, scroll.scrollLeft + dx * wheelPixelsPerUnit));
+        { updateScrollTop(cm, Math.max(0, scroll.scrollTop + dy * pixelsPerUnit)); }
+      setScrollLeft(cm, Math.max(0, scroll.scrollLeft + dx * pixelsPerUnit));
       // Only prevent default scrolling if vertical scrolling is
       // actually possible. Otherwise, it causes vertical scroll
       // jitter on OSX trackpads when deltaX is small and deltaY
@@ -4596,15 +4649,15 @@
 
     // 'Project' the visible viewport to cover the area that is being
     // scrolled into view (if we know enough to estimate it).
-    if (dy && wheelPixelsPerUnit != null) {
-      var pixels = dy * wheelPixelsPerUnit;
+    if (dy && pixelsPerUnit != null) {
+      var pixels = dy * pixelsPerUnit;
       var top = cm.doc.scrollTop, bot = top + display.wrapper.clientHeight;
       if (pixels < 0) { top = Math.max(0, top + pixels - 50); }
       else { bot = Math.min(cm.doc.height, bot + pixels + 50); }
       updateDisplaySimple(cm, {top: top, bottom: bot});
     }
 
-    if (wheelSamples < 20) {
+    if (wheelSamples < 20 && e.deltaMode !== 0) {
       if (display.wheelStartX == null) {
         display.wheelStartX = scroll.scrollLeft; display.wheelStartY = scroll.scrollTop;
         display.wheelDX = dx; display.wheelDY = dy;
@@ -5228,7 +5281,7 @@
       var range = sel.ranges[i];
       var old = sel.ranges.length == doc.sel.ranges.length && doc.sel.ranges[i];
       var newAnchor = skipAtomic(doc, range.anchor, old && old.anchor, bias, mayClear);
-      var newHead = skipAtomic(doc, range.head, old && old.head, bias, mayClear);
+      var newHead = range.head == range.anchor ? newAnchor : skipAtomic(doc, range.head, old && old.head, bias, mayClear);
       if (out || newAnchor != range.anchor || newHead != range.head) {
         if (!out) { out = sel.ranges.slice(0, i); }
         out[i] = new Range(newAnchor, newHead);
@@ -7280,7 +7333,7 @@
   function onKeyDown(e) {
     var cm = this;
     if (e.target && e.target != cm.display.input.getField()) { return }
-    cm.curOp.focus = activeElt();
+    cm.curOp.focus = activeElt(doc(cm));
     if (signalDOMEvent(cm, e)) { return }
     // IE does strange things with escape.
     if (ie && ie_version < 11 && e.keyCode == 27) { e.returnValue = false; }
@@ -7387,7 +7440,7 @@
     }
     if (clickInGutter(cm, e)) { return }
     var pos = posFromMouse(cm, e), button = e_button(e), repeat = pos ? clickRepeat(pos, button) : "single";
-    window.focus();
+    win(cm).focus();
 
     // #3261: make sure, that we're not starting a second selection
     if (button == 1 && cm.state.selectingText)
@@ -7442,7 +7495,7 @@
 
   function leftButtonDown(cm, pos, repeat, event) {
     if (ie) { setTimeout(bind(ensureFocus, cm), 0); }
-    else { cm.curOp.focus = activeElt(); }
+    else { cm.curOp.focus = activeElt(doc(cm)); }
 
     var behavior = configureMouse(cm, repeat, event);
 
@@ -7512,19 +7565,19 @@
   // Normal selection, as opposed to text dragging.
   function leftButtonSelect(cm, event, start, behavior) {
     if (ie) { delayBlurEvent(cm); }
-    var display = cm.display, doc = cm.doc;
+    var display = cm.display, doc$1 = cm.doc;
     e_preventDefault(event);
 
-    var ourRange, ourIndex, startSel = doc.sel, ranges = startSel.ranges;
+    var ourRange, ourIndex, startSel = doc$1.sel, ranges = startSel.ranges;
     if (behavior.addNew && !behavior.extend) {
-      ourIndex = doc.sel.contains(start);
+      ourIndex = doc$1.sel.contains(start);
       if (ourIndex > -1)
         { ourRange = ranges[ourIndex]; }
       else
         { ourRange = new Range(start, start); }
     } else {
-      ourRange = doc.sel.primary();
-      ourIndex = doc.sel.primIndex;
+      ourRange = doc$1.sel.primary();
+      ourIndex = doc$1.sel.primIndex;
     }
 
     if (behavior.unit == "rectangle") {
@@ -7541,18 +7594,18 @@
 
     if (!behavior.addNew) {
       ourIndex = 0;
-      setSelection(doc, new Selection([ourRange], 0), sel_mouse);
-      startSel = doc.sel;
+      setSelection(doc$1, new Selection([ourRange], 0), sel_mouse);
+      startSel = doc$1.sel;
     } else if (ourIndex == -1) {
       ourIndex = ranges.length;
-      setSelection(doc, normalizeSelection(cm, ranges.concat([ourRange]), ourIndex),
+      setSelection(doc$1, normalizeSelection(cm, ranges.concat([ourRange]), ourIndex),
                    {scroll: false, origin: "*mouse"});
     } else if (ranges.length > 1 && ranges[ourIndex].empty() && behavior.unit == "char" && !behavior.extend) {
-      setSelection(doc, normalizeSelection(cm, ranges.slice(0, ourIndex).concat(ranges.slice(ourIndex + 1)), 0),
+      setSelection(doc$1, normalizeSelection(cm, ranges.slice(0, ourIndex).concat(ranges.slice(ourIndex + 1)), 0),
                    {scroll: false, origin: "*mouse"});
-      startSel = doc.sel;
+      startSel = doc$1.sel;
     } else {
-      replaceOneSelection(doc, ourIndex, ourRange, sel_mouse);
+      replaceOneSelection(doc$1, ourIndex, ourRange, sel_mouse);
     }
 
     var lastPos = start;
@@ -7562,19 +7615,19 @@
 
       if (behavior.unit == "rectangle") {
         var ranges = [], tabSize = cm.options.tabSize;
-        var startCol = countColumn(getLine(doc, start.line).text, start.ch, tabSize);
-        var posCol = countColumn(getLine(doc, pos.line).text, pos.ch, tabSize);
+        var startCol = countColumn(getLine(doc$1, start.line).text, start.ch, tabSize);
+        var posCol = countColumn(getLine(doc$1, pos.line).text, pos.ch, tabSize);
         var left = Math.min(startCol, posCol), right = Math.max(startCol, posCol);
         for (var line = Math.min(start.line, pos.line), end = Math.min(cm.lastLine(), Math.max(start.line, pos.line));
              line <= end; line++) {
-          var text = getLine(doc, line).text, leftPos = findColumn(text, left, tabSize);
+          var text = getLine(doc$1, line).text, leftPos = findColumn(text, left, tabSize);
           if (left == right)
             { ranges.push(new Range(Pos(line, leftPos), Pos(line, leftPos))); }
           else if (text.length > leftPos)
             { ranges.push(new Range(Pos(line, leftPos), Pos(line, findColumn(text, right, tabSize)))); }
         }
         if (!ranges.length) { ranges.push(new Range(start, start)); }
-        setSelection(doc, normalizeSelection(cm, startSel.ranges.slice(0, ourIndex).concat(ranges), ourIndex),
+        setSelection(doc$1, normalizeSelection(cm, startSel.ranges.slice(0, ourIndex).concat(ranges), ourIndex),
                      {origin: "*mouse", scroll: false});
         cm.scrollIntoView(pos);
       } else {
@@ -7589,8 +7642,8 @@
           anchor = maxPos(oldRange.to(), range.head);
         }
         var ranges$1 = startSel.ranges.slice(0);
-        ranges$1[ourIndex] = bidiSimplify(cm, new Range(clipPos(doc, anchor), head));
-        setSelection(doc, normalizeSelection(cm, ranges$1, ourIndex), sel_mouse);
+        ranges$1[ourIndex] = bidiSimplify(cm, new Range(clipPos(doc$1, anchor), head));
+        setSelection(doc$1, normalizeSelection(cm, ranges$1, ourIndex), sel_mouse);
       }
     }
 
@@ -7606,9 +7659,9 @@
       var cur = posFromMouse(cm, e, true, behavior.unit == "rectangle");
       if (!cur) { return }
       if (cmp(cur, lastPos) != 0) {
-        cm.curOp.focus = activeElt();
+        cm.curOp.focus = activeElt(doc(cm));
         extendTo(cur);
-        var visible = visibleLines(display, doc);
+        var visible = visibleLines(display, doc$1);
         if (cur.line >= visible.to || cur.line < visible.from)
           { setTimeout(operation(cm, function () {if (counter == curCount) { extend(e); }}), 150); }
       } else {
@@ -7633,7 +7686,7 @@
       }
       off(display.wrapper.ownerDocument, "mousemove", move);
       off(display.wrapper.ownerDocument, "mouseup", up);
-      doc.history.lastSelOrigin = null;
+      doc$1.history.lastSelOrigin = null;
     }
 
     var move = operation(cm, function (e) {
@@ -7790,7 +7843,7 @@
       for (var i = newBreaks.length - 1; i >= 0; i--)
         { replaceRange(cm.doc, val, newBreaks[i], Pos(newBreaks[i].line, newBreaks[i].ch + val.length)); }
     });
-    option("specialChars", /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b\u200e\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, function (cm, val, old) {
+    option("specialChars", /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b\u200e\u200f\u2028\u2029\u202d\u202e\u2066\u2067\u2069\ufeff\ufff9-\ufffc]/g, function (cm, val, old) {
       cm.state.specialChars = new RegExp(val.source + (val.test("\t") ? "" : "|\t"), "g");
       if (old != Init) { cm.refresh(); }
     });
@@ -8233,7 +8286,7 @@
     var pasted = e.clipboardData && e.clipboardData.getData("Text");
     if (pasted) {
       e.preventDefault();
-      if (!cm.isReadOnly() && !cm.options.disableInput)
+      if (!cm.isReadOnly() && !cm.options.disableInput && cm.hasFocus())
         { runInOp(cm, function () { return applyTextInput(cm, pasted, 0, null, "paste"); }); }
       return true
     }
@@ -8275,13 +8328,13 @@
   }
 
   function disableBrowserMagic(field, spellcheck, autocorrect, autocapitalize) {
-    field.setAttribute("autocorrect", autocorrect ? "" : "off");
-    field.setAttribute("autocapitalize", autocapitalize ? "" : "off");
+    field.setAttribute("autocorrect", autocorrect ? "on" : "off");
+    field.setAttribute("autocapitalize", autocapitalize ? "on" : "off");
     field.setAttribute("spellcheck", !!spellcheck);
   }
 
   function hiddenTextarea() {
-    var te = elt("textarea", null, null, "position: absolute; bottom: -1em; padding: 0; width: 1px; height: 1em; outline: none");
+    var te = elt("textarea", null, null, "position: absolute; bottom: -1em; padding: 0; width: 1px; height: 1em; min-height: 1em; outline: none");
     var div = elt("div", [te], null, "overflow: hidden; position: relative; width: 3px; height: 0px;");
     // The textarea is kept positioned near the cursor to prevent the
     // fact that it'll be scrolled into view on input from scrolling
@@ -8291,7 +8344,6 @@
     else { te.setAttribute("wrap", "off"); }
     // If border: 0; -- iOS fails to open keyboard (issue #1287)
     if (ios) { te.style.border = "1px solid black"; }
-    disableBrowserMagic(te);
     return div
   }
 
@@ -8310,7 +8362,7 @@
 
     CodeMirror.prototype = {
       constructor: CodeMirror,
-      focus: function(){window.focus(); this.display.input.focus();},
+      focus: function(){win(this).focus(); this.display.input.focus();},
 
       setOption: function(option, value) {
         var options = this.options, old = options[option];
@@ -8634,7 +8686,7 @@
 
         signal(this, "overwriteToggle", this, this.state.overwrite);
       },
-      hasFocus: function() { return this.display.input.getField() == activeElt() },
+      hasFocus: function() { return this.display.input.getField() == activeElt(doc(this)) },
       isReadOnly: function() { return !!(this.options.readOnly || this.doc.cantEdit) },
 
       scrollTo: methodOp(function (x, y) { scrollToCoords(this, x, y); }),
@@ -8815,7 +8867,7 @@
   function findPosV(cm, pos, dir, unit) {
     var doc = cm.doc, x = pos.left, y;
     if (unit == "page") {
-      var pageSize = Math.min(cm.display.wrapper.clientHeight, window.innerHeight || document.documentElement.clientHeight);
+      var pageSize = Math.min(cm.display.wrapper.clientHeight, win(cm).innerHeight || doc(cm).documentElement.clientHeight);
       var moveAmount = Math.max(pageSize - .5 * textHeight(cm.display), 3);
       y = (dir > 0 ? pos.bottom : pos.top) + dir * moveAmount;
 
@@ -8913,9 +8965,10 @@
       }
       // Old-fashioned briefly-focus-a-textarea hack
       var kludge = hiddenTextarea(), te = kludge.firstChild;
+      disableBrowserMagic(te);
       cm.display.lineSpace.insertBefore(kludge, cm.display.lineSpace.firstChild);
       te.value = lastCopied.text.join("\n");
-      var hadFocus = activeElt();
+      var hadFocus = activeElt(div.ownerDocument);
       selectInput(te);
       setTimeout(function () {
         cm.display.lineSpace.removeChild(kludge);
@@ -8938,7 +8991,7 @@
 
   ContentEditableInput.prototype.prepareSelection = function () {
     var result = prepareSelection(this.cm, false);
-    result.focus = activeElt() == this.div;
+    result.focus = activeElt(this.div.ownerDocument) == this.div;
     return result
   };
 
@@ -9034,7 +9087,7 @@
 
   ContentEditableInput.prototype.focus = function () {
     if (this.cm.options.readOnly != "nocursor") {
-      if (!this.selectionInEditor() || activeElt() != this.div)
+      if (!this.selectionInEditor() || activeElt(this.div.ownerDocument) != this.div)
         { this.showSelection(this.prepareSelection(), true); }
       this.div.focus();
     }
@@ -9045,9 +9098,11 @@
   ContentEditableInput.prototype.supportsTouch = function () { return true };
 
   ContentEditableInput.prototype.receivedFocus = function () {
+      var this$1 = this;
+
     var input = this;
     if (this.selectionInEditor())
-      { this.pollSelection(); }
+      { setTimeout(function () { return this$1.pollSelection(); }, 20); }
     else
       { runInOp(this.cm, function () { return input.cm.curOp.selectionChanged = true; }); }
 
@@ -9384,6 +9439,7 @@
     // Used to work around IE issue with selection being forgotten when focus moves away from textarea
     this.hasSelection = false;
     this.composing = null;
+    this.resetting = false;
   };
 
   TextareaInput.prototype.init = function (display) {
@@ -9474,6 +9530,8 @@
     // The semihidden textarea that is focused when the editor is
     // focused, and receives input.
     this.textarea = this.wrapper.firstChild;
+    var opts = this.cm.options;
+    disableBrowserMagic(this.textarea, opts.spellcheck, opts.autocorrect, opts.autocapitalize);
   };
 
   TextareaInput.prototype.screenReaderLabelChanged = function (label) {
@@ -9516,8 +9574,9 @@
   // Reset the input to correspond to the selection (or to be empty,
   // when not typing and nothing is selected)
   TextareaInput.prototype.reset = function (typing) {
-    if (this.contextMenuPending || this.composing) { return }
+    if (this.contextMenuPending || this.composing && typing) { return }
     var cm = this.cm;
+    this.resetting = true;
     if (cm.somethingSelected()) {
       this.prevInput = "";
       var content = cm.getSelection();
@@ -9528,6 +9587,7 @@
       this.prevInput = this.textarea.value = "";
       if (ie && ie_version >= 9) { this.hasSelection = null; }
     }
+    this.resetting = false;
   };
 
   TextareaInput.prototype.getField = function () { return this.textarea };
@@ -9535,7 +9595,7 @@
   TextareaInput.prototype.supportsTouch = function () { return false };
 
   TextareaInput.prototype.focus = function () {
-    if (this.cm.options.readOnly != "nocursor" && (!mobile || activeElt() != this.textarea)) {
+    if (this.cm.options.readOnly != "nocursor" && (!mobile || activeElt(this.textarea.ownerDocument) != this.textarea)) {
       try { this.textarea.focus(); }
       catch (e) {} // IE8 will throw if the textarea is display: none or not in DOM
     }
@@ -9589,7 +9649,7 @@
     // possible when it is clear that nothing happened. hasSelection
     // will be the case when there is a lot of text in the textarea,
     // in which case reading its value would be expensive.
-    if (this.contextMenuPending || !cm.state.focused ||
+    if (this.contextMenuPending || this.resetting || !cm.state.focused ||
         (hasSelection(input) && !prevInput && !this.composing) ||
         cm.isReadOnly() || cm.options.disableInput || cm.state.keySeq)
       { return false }
@@ -9658,9 +9718,9 @@
     input.wrapper.style.cssText = "position: static";
     te.style.cssText = "position: absolute; width: 30px; height: 30px;\n      top: " + (e.clientY - wrapperBox.top - 5) + "px; left: " + (e.clientX - wrapperBox.left - 5) + "px;\n      z-index: 1000; background: " + (ie ? "rgba(255, 255, 255, .05)" : "transparent") + ";\n      outline: none; border-width: 0; outline: none; overflow: hidden; opacity: .05; filter: alpha(opacity=5);";
     var oldScrollY;
-    if (webkit) { oldScrollY = window.scrollY; } // Work around Chrome issue (#2712)
+    if (webkit) { oldScrollY = te.ownerDocument.defaultView.scrollY; } // Work around Chrome issue (#2712)
     display.input.focus();
-    if (webkit) { window.scrollTo(null, oldScrollY); }
+    if (webkit) { te.ownerDocument.defaultView.scrollTo(null, oldScrollY); }
     display.input.reset();
     // Adds "Select all" to context menu in FF
     if (!cm.somethingSelected()) { te.value = input.prevInput = " "; }
@@ -9742,7 +9802,7 @@
     // Set autofocus to true if this textarea is focused, or if it has
     // autofocus and no other element is focused.
     if (options.autofocus == null) {
-      var hasFocus = activeElt();
+      var hasFocus = activeElt(textarea.ownerDocument);
       options.autofocus = hasFocus == textarea ||
         textarea.getAttribute("autofocus") != null && hasFocus == document.body;
     }
@@ -9876,7 +9936,7 @@
 
   addLegacyProps(CodeMirror);
 
-  CodeMirror.version = "5.62.2";
+  CodeMirror.version = "5.65.13";
 
   return CodeMirror;
 
@@ -10946,7 +11006,7 @@ module.exports = function(module) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -11134,6 +11194,10 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
     };
   }
 
+  function lower(tagName) {
+    return tagName && tagName.toLowerCase();
+  }
+
   function Context(state, tagName, startOfLine) {
     this.prev = state.context;
     this.tagName = tagName || "";
@@ -11152,8 +11216,8 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
         return;
       }
       parentTagName = state.context.tagName;
-      if (!config.contextGrabbers.hasOwnProperty(parentTagName) ||
-          !config.contextGrabbers[parentTagName].hasOwnProperty(nextTagName)) {
+      if (!config.contextGrabbers.hasOwnProperty(lower(parentTagName)) ||
+          !config.contextGrabbers[lower(parentTagName)].hasOwnProperty(lower(nextTagName))) {
         return;
       }
       popContext(state);
@@ -11187,7 +11251,7 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
     if (type == "word") {
       var tagName = stream.current();
       if (state.context && state.context.tagName != tagName &&
-          config.implicitlyClosed.hasOwnProperty(state.context.tagName))
+          config.implicitlyClosed.hasOwnProperty(lower(state.context.tagName)))
         popContext(state);
       if ((state.context && state.context.tagName == tagName) || config.matchClosing === false) {
         setStyle = "tag";
@@ -11226,7 +11290,7 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
       var tagName = state.tagName, tagStart = state.tagStart;
       state.tagName = state.tagStart = null;
       if (type == "selfcloseTag" ||
-          config.autoSelfClosers.hasOwnProperty(tagName)) {
+          config.autoSelfClosers.hasOwnProperty(lower(tagName))) {
         maybePopContext(state, tagName);
       } else {
         maybePopContext(state, tagName);
@@ -11306,7 +11370,7 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
           if (context.tagName == tagAfter[2]) {
             context = context.prev;
             break;
-          } else if (config.implicitlyClosed.hasOwnProperty(context.tagName)) {
+          } else if (config.implicitlyClosed.hasOwnProperty(lower(context.tagName))) {
             context = context.prev;
           } else {
             break;
@@ -11314,8 +11378,8 @@ CodeMirror.defineMode("xml", function(editorConf, config_) {
         }
       } else if (tagAfter) { // Opening tag spotted
         while (context) {
-          var grabbers = config.contextGrabbers[context.tagName];
-          if (grabbers && grabbers.hasOwnProperty(tagAfter[2]))
+          var grabbers = config.contextGrabbers[lower(context.tagName)];
+          if (grabbers && grabbers.hasOwnProperty(lower(tagAfter[2])))
             context = context.prev;
           else
             break;
@@ -11365,7 +11429,7 @@ if (!CodeMirror.mimeModes.hasOwnProperty("text/html"))
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -11696,6 +11760,7 @@ CodeMirror.defineMode("javascript", function(config, parserConfig) {
     cx.state.context = new Context(cx.state.context, cx.state.localVars, true)
     cx.state.localVars = null
   }
+  pushcontext.lex = pushblockcontext.lex = true
   function popcontext() {
     cx.state.localVars = cx.state.context.vars
     cx.state.context = cx.state.context.prev
@@ -12144,7 +12209,7 @@ CodeMirror.defineMode("javascript", function(config, parserConfig) {
     if (type == "async" ||
         (type == "variable" &&
          (value == "static" || value == "get" || value == "set" || (isTS && isModifier(value))) &&
-         cx.stream.match(/^\s+[\w$\xa1-\uffff]/, false))) {
+         cx.stream.match(/^\s+#?[\w$\xa1-\uffff]/, false))) {
       cx.marked = "keyword";
       return cont(classBody);
     }
@@ -12330,7 +12395,7 @@ CodeMirror.defineMIME("application/typescript", { name: "javascript", typescript
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -12559,7 +12624,7 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     if (type == "}" || type == "{") return popAndPass(type, stream, state);
     if (type == "(") return pushContext(state, stream, "parens");
 
-    if (type == "hash" && !/^#([0-9a-fA-f]{3,4}|[0-9a-fA-f]{6}|[0-9a-fA-f]{8})$/.test(stream.current())) {
+    if (type == "hash" && !/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(stream.current())) {
       override += " error";
     } else if (type == "word") {
       wordAsValue(stream);
@@ -12774,13 +12839,15 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "monochrome", "min-monochrome", "max-monochrome", "resolution",
     "min-resolution", "max-resolution", "scan", "grid", "orientation",
     "device-pixel-ratio", "min-device-pixel-ratio", "max-device-pixel-ratio",
-    "pointer", "any-pointer", "hover", "any-hover", "prefers-color-scheme"
+    "pointer", "any-pointer", "hover", "any-hover", "prefers-color-scheme",
+    "dynamic-range", "video-dynamic-range"
   ], mediaFeatures = keySet(mediaFeatures_);
 
   var mediaValueKeywords_ = [
     "landscape", "portrait", "none", "coarse", "fine", "on-demand", "hover",
     "interlace", "progressive",
-    "dark", "light"
+    "dark", "light",
+    "standard", "high"
   ], mediaValueKeywords = keySet(mediaValueKeywords_);
 
   var propertyKeywords_ = [
@@ -12813,7 +12880,7 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "cue-before", "cursor", "direction", "display", "dominant-baseline",
     "drop-initial-after-adjust", "drop-initial-after-align",
     "drop-initial-before-adjust", "drop-initial-before-align", "drop-initial-size",
-    "drop-initial-value", "elevation", "empty-cells", "fit", "fit-position",
+    "drop-initial-value", "elevation", "empty-cells", "fit", "fit-content", "fit-position",
     "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow",
     "flex-shrink", "flex-wrap", "float", "float-offset", "flow-from", "flow-into",
     "font", "font-family", "font-feature-settings", "font-kerning",
@@ -12895,7 +12962,7 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
   ], propertyKeywords = keySet(propertyKeywords_);
 
   var nonStandardPropertyKeywords_ = [
-    "border-block", "border-block-color", "border-block-end",
+    "accent-color", "aspect-ratio", "border-block", "border-block-color", "border-block-end",
     "border-block-end-color", "border-block-end-style", "border-block-end-width",
     "border-block-start", "border-block-start-color", "border-block-start-style",
     "border-block-start-width", "border-block-style", "border-block-width",
@@ -12903,9 +12970,9 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "border-inline-end-color", "border-inline-end-style",
     "border-inline-end-width", "border-inline-start", "border-inline-start-color",
     "border-inline-start-style", "border-inline-start-width",
-    "border-inline-style", "border-inline-width", "margin-block",
+    "border-inline-style", "border-inline-width", "content-visibility", "margin-block",
     "margin-block-end", "margin-block-start", "margin-inline", "margin-inline-end",
-    "margin-inline-start", "padding-block", "padding-block-end",
+    "margin-inline-start", "overflow-anchor", "overscroll-behavior", "padding-block", "padding-block-end",
     "padding-block-start", "padding-inline", "padding-inline-end",
     "padding-inline-start", "scroll-snap-stop", "scrollbar-3d-light-color",
     "scrollbar-arrow-color", "scrollbar-base-color", "scrollbar-dark-shadow-color",
@@ -12929,16 +12996,16 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown",
     "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue",
     "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod",
-    "darkgray", "darkgreen", "darkkhaki", "darkmagenta", "darkolivegreen",
+    "darkgray", "darkgreen", "darkgrey", "darkkhaki", "darkmagenta", "darkolivegreen",
     "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen",
-    "darkslateblue", "darkslategray", "darkturquoise", "darkviolet",
-    "deeppink", "deepskyblue", "dimgray", "dodgerblue", "firebrick",
+    "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet",
+    "deeppink", "deepskyblue", "dimgray", "dimgrey", "dodgerblue", "firebrick",
     "floralwhite", "forestgreen", "fuchsia", "gainsboro", "ghostwhite",
     "gold", "goldenrod", "gray", "grey", "green", "greenyellow", "honeydew",
     "hotpink", "indianred", "indigo", "ivory", "khaki", "lavender",
     "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral",
-    "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgreen", "lightpink",
-    "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray",
+    "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink",
+    "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey",
     "lightsteelblue", "lightyellow", "lime", "limegreen", "linen", "magenta",
     "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple",
     "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise",
@@ -12948,7 +13015,7 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "papayawhip", "peachpuff", "peru", "pink", "plum", "powderblue",
     "purple", "rebeccapurple", "red", "rosybrown", "royalblue", "saddlebrown",
     "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue",
-    "slateblue", "slategray", "snow", "springgreen", "steelblue", "tan",
+    "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue", "tan",
     "teal", "thistle", "tomato", "turquoise", "violet", "wheat", "white",
     "whitesmoke", "yellow", "yellowgreen"
   ], colorKeywords = keySet(colorKeywords_);
@@ -12959,21 +13026,21 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "always", "amharic", "amharic-abegede", "antialiased", "appworkspace",
     "arabic-indic", "armenian", "asterisks", "attr", "auto", "auto-flow", "avoid", "avoid-column", "avoid-page",
     "avoid-region", "axis-pan", "background", "backwards", "baseline", "below", "bidi-override", "binary",
-    "bengali", "blink", "block", "block-axis", "bold", "bolder", "border", "border-box",
-    "both", "bottom", "break", "break-all", "break-word", "bullets", "button", "button-bevel",
+    "bengali", "blink", "block", "block-axis", "blur", "bold", "bolder", "border", "border-box",
+    "both", "bottom", "break", "break-all", "break-word", "brightness", "bullets", "button",
     "buttonface", "buttonhighlight", "buttonshadow", "buttontext", "calc", "cambodian",
     "capitalize", "caps-lock-indicator", "caption", "captiontext", "caret",
     "cell", "center", "checkbox", "circle", "cjk-decimal", "cjk-earthly-branch",
     "cjk-heavenly-stem", "cjk-ideographic", "clear", "clip", "close-quote",
     "col-resize", "collapse", "color", "color-burn", "color-dodge", "column", "column-reverse",
-    "compact", "condensed", "contain", "content", "contents",
-    "content-box", "context-menu", "continuous", "copy", "counter", "counters", "cover", "crop",
-    "cross", "crosshair", "currentcolor", "cursive", "cyclic", "darken", "dashed", "decimal",
+    "compact", "condensed", "conic-gradient", "contain", "content", "contents",
+    "content-box", "context-menu", "continuous", "contrast", "copy", "counter", "counters", "cover", "crop",
+    "cross", "crosshair", "cubic-bezier", "currentcolor", "cursive", "cyclic", "darken", "dashed", "decimal",
     "decimal-leading-zero", "default", "default-button", "dense", "destination-atop",
     "destination-in", "destination-out", "destination-over", "devanagari", "difference",
     "disc", "discard", "disclosure-closed", "disclosure-open", "document",
     "dot-dash", "dot-dot-dash",
-    "dotted", "double", "down", "e-resize", "ease", "ease-in", "ease-in-out", "ease-out",
+    "dotted", "double", "down", "drop-shadow", "e-resize", "ease", "ease-in", "ease-in-out", "ease-out",
     "element", "ellipse", "ellipsis", "embed", "end", "ethiopic", "ethiopic-abegede",
     "ethiopic-abegede-am-et", "ethiopic-abegede-gez", "ethiopic-abegede-ti-er",
     "ethiopic-abegede-ti-et", "ethiopic-halehame-aa-er",
@@ -12983,10 +13050,10 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "ethiopic-halehame-ti-er", "ethiopic-halehame-ti-et", "ethiopic-halehame-tig",
     "ethiopic-numeric", "ew-resize", "exclusion", "expanded", "extends", "extra-condensed",
     "extra-expanded", "fantasy", "fast", "fill", "fill-box", "fixed", "flat", "flex", "flex-end", "flex-start", "footnotes",
-    "forwards", "from", "geometricPrecision", "georgian", "graytext", "grid", "groove",
+    "forwards", "from", "geometricPrecision", "georgian", "grayscale", "graytext", "grid", "groove",
     "gujarati", "gurmukhi", "hand", "hangul", "hangul-consonant", "hard-light", "hebrew",
     "help", "hidden", "hide", "higher", "highlight", "highlighttext",
-    "hiragana", "hiragana-iroha", "horizontal", "hsl", "hsla", "hue", "icon", "ignore",
+    "hiragana", "hiragana-iroha", "horizontal", "hsl", "hsla", "hue", "hue-rotate", "icon", "ignore",
     "inactiveborder", "inactivecaption", "inactivecaptiontext", "infinite",
     "infobackground", "infotext", "inherit", "initial", "inline", "inline-axis",
     "inline-block", "inline-flex", "inline-grid", "inline-table", "inset", "inside", "intrinsic", "invert",
@@ -12998,14 +13065,10 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "local", "logical", "loud", "lower", "lower-alpha", "lower-armenian",
     "lower-greek", "lower-hexadecimal", "lower-latin", "lower-norwegian",
     "lower-roman", "lowercase", "ltr", "luminosity", "malayalam", "manipulation", "match", "matrix", "matrix3d",
-    "media-controls-background", "media-current-time-display",
-    "media-fullscreen-button", "media-mute-button", "media-play-button",
-    "media-return-to-realtime-button", "media-rewind-button",
-    "media-seek-back-button", "media-seek-forward-button", "media-slider",
-    "media-sliderthumb", "media-time-remaining-display", "media-volume-slider",
-    "media-volume-slider-container", "media-volume-sliderthumb", "medium",
-    "menu", "menulist", "menulist-button", "menulist-text",
-    "menulist-textfield", "menutext", "message-box", "middle", "min-intrinsic",
+    "media-play-button", "media-slider", "media-sliderthumb",
+    "media-volume-slider", "media-volume-sliderthumb", "medium",
+    "menu", "menulist", "menulist-button",
+    "menutext", "message-box", "middle", "min-intrinsic",
     "mix", "mongolian", "monospace", "move", "multiple", "multiple_mask_images", "multiply", "myanmar", "n-resize",
     "narrower", "ne-resize", "nesw-resize", "no-close-quote", "no-drop",
     "no-open-quote", "no-repeat", "none", "normal", "not-allowed", "nowrap",
@@ -13016,15 +13079,15 @@ CodeMirror.defineMode("css", function(config, parserConfig) {
     "pointer", "polygon", "portrait", "pre", "pre-line", "pre-wrap", "preserve-3d",
     "progress", "push-button", "radial-gradient", "radio", "read-only",
     "read-write", "read-write-plaintext-only", "rectangle", "region",
-    "relative", "repeat", "repeating-linear-gradient",
-    "repeating-radial-gradient", "repeat-x", "repeat-y", "reset", "reverse",
+    "relative", "repeat", "repeating-linear-gradient", "repeating-radial-gradient",
+    "repeating-conic-gradient", "repeat-x", "repeat-y", "reset", "reverse",
     "rgb", "rgba", "ridge", "right", "rotate", "rotate3d", "rotateX", "rotateY",
     "rotateZ", "round", "row", "row-resize", "row-reverse", "rtl", "run-in", "running",
-    "s-resize", "sans-serif", "saturation", "scale", "scale3d", "scaleX", "scaleY", "scaleZ", "screen",
+    "s-resize", "sans-serif", "saturate", "saturation", "scale", "scale3d", "scaleX", "scaleY", "scaleZ", "screen",
     "scroll", "scrollbar", "scroll-position", "se-resize", "searchfield",
     "searchfield-cancel-button", "searchfield-decoration",
     "searchfield-results-button", "searchfield-results-decoration", "self-start", "self-end",
-    "semi-condensed", "semi-expanded", "separate", "serif", "show", "sidama",
+    "semi-condensed", "semi-expanded", "separate", "sepia", "serif", "show", "sidama",
     "simp-chinese-formal", "simp-chinese-informal", "single",
     "skew", "skewX", "skewY", "skip-white-space", "slide", "slider-horizontal",
     "slider-vertical", "sliderthumb-horizontal", "sliderthumb-vertical", "slow",
@@ -57639,7 +57702,7 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/*!
  * URI.js - Mutating URLs
  * IPv6 Support
  *
- * Version: 1.19.7
+ * Version: 1.19.11
  *
  * Author: Rodney Rehm
  * Web: http://medialize.github.io/URI.js/
@@ -57834,7 +57897,7 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/*!
  * URI.js - Mutating URLs
  * Second Level Domain (SLD) Support
  *
- * Version: 1.19.7
+ * Version: 1.19.11
  *
  * Author: Rodney Rehm
  * Web: http://medialize.github.io/URI.js/
@@ -58138,7 +58201,7 @@ module.exports = Component.exports
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -58189,7 +58252,7 @@ module.exports = Component.exports
   }
 
   function getTagRegexp(tagName, anchored) {
-    return new RegExp((anchored ? "^" : "") + "<\/\s*" + tagName + "\s*>", "i");
+    return new RegExp((anchored ? "^" : "") + "<\/\\s*" + tagName + "\\s*>", "i");
   }
 
   function addTags(from, to) {
@@ -58297,7 +58360,7 @@ module.exports = Component.exports
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -58762,7 +58825,7 @@ CodeMirror.defineMIME("text/x-sass", "sass");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -58888,7 +58951,7 @@ CodeMirror.defineMIME("text/yaml", "yaml");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -60752,7 +60815,7 @@ if (hadRuntime) {
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;/*!
  * URI.js - Mutating URLs
  *
- * Version: 1.19.7
+ * Version: 1.19.11
  *
  * Author: Rodney Rehm
  * Web: http://medialize.github.io/URI.js/
@@ -60835,7 +60898,7 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_
     return /^[0-9]+$/.test(value);
   }
 
-  URI.version = '1.19.7';
+  URI.version = '1.19.11';
 
   var p = URI.prototype;
   var hasOwn = Object.prototype.hasOwnProperty;
@@ -60993,6 +61056,9 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_
     // balanced parens inclusion (), [], {}, <>
     parens: /(\([^\)]*\)|\[[^\]]*\]|\{[^}]*\}|<[^>]*>)/g,
   };
+  URI.leading_whitespace_expression = /^[\x00-\x20\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/
+  // https://infra.spec.whatwg.org/#ascii-tab-or-newline
+  URI.ascii_tab_whitespace = /[\u0009\u000A\u000D]+/g
   // http://www.iana.org/assignments/uri-schemes.html
   // http://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers#Well-known_ports
   URI.defaultPorts = {
@@ -61248,6 +61314,11 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_
         preventInvalidHostname: URI.preventInvalidHostname
       };
     }
+
+    string = string.replace(URI.leading_whitespace_expression, '')
+    // https://infra.spec.whatwg.org/#ascii-tab-or-newline
+    string = string.replace(URI.ascii_tab_whitespace, '')
+
     // [protocol"://"[username[":"password]"@"]hostname[":"port]"/"?][path]["?"querystring]["#"fragment]
 
     // extract fragment
@@ -61267,7 +61338,9 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_
     }
 
     // slashes and backslashes have lost all meaning for the web protocols (https, http, wss, ws)
-    string = string.replace(/^(https?|ftp|wss?)?:[/\\]*/, '$1://');
+    string = string.replace(/^(https?|ftp|wss?)?:+[/\\]*/i, '$1://');
+    // slashes and backslashes have lost all meaning for scheme relative URLs
+    string = string.replace(/^[/\\]{2,}/i, '//');
 
     // extract protocol
     if (string.substring(0, 2) === '//') {
@@ -63325,7 +63398,7 @@ var render = function() {
               _c(
                 "div",
                 {
-                  staticClass: "bg-white rounded-lg shadow-lg ",
+                  staticClass: "bg-white rounded-lg shadow-lg",
                   staticStyle: { width: "600px" }
                 },
                 [
@@ -63994,7 +64067,7 @@ var render = function() {
             _c(
               "div",
               {
-                staticClass: "bg-white rounded-lg shadow-lg ",
+                staticClass: "bg-white rounded-lg shadow-lg",
                 staticStyle: { width: "600px" }
               },
               [
@@ -65203,98 +65276,75 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
 /***/ (function(module, exports, __webpack_require__) {
 
 /*!
- * Viewer.js v1.10.1
+ * Viewer.js v1.11.3
  * https://fengyuanchen.github.io/viewerjs
  *
  * Copyright 2015-present Chen Fengyuan
  * Released under the MIT license
  *
- * Date: 2021-08-01T13:35:49.731Z
+ * Date: 2023-03-05T07:01:17.741Z
  */
 
 (function (global, factory) {
    true ? module.exports = factory() :
   typeof define === 'function' && define.amd ? define(factory) :
   (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.Viewer = factory());
-}(this, (function () { 'use strict';
+})(this, (function () { 'use strict';
 
   function ownKeys(object, enumerableOnly) {
     var keys = Object.keys(object);
-
     if (Object.getOwnPropertySymbols) {
       var symbols = Object.getOwnPropertySymbols(object);
-
-      if (enumerableOnly) {
-        symbols = symbols.filter(function (sym) {
-          return Object.getOwnPropertyDescriptor(object, sym).enumerable;
-        });
-      }
-
-      keys.push.apply(keys, symbols);
+      enumerableOnly && (symbols = symbols.filter(function (sym) {
+        return Object.getOwnPropertyDescriptor(object, sym).enumerable;
+      })), keys.push.apply(keys, symbols);
     }
-
     return keys;
   }
-
   function _objectSpread2(target) {
     for (var i = 1; i < arguments.length; i++) {
-      var source = arguments[i] != null ? arguments[i] : {};
-
-      if (i % 2) {
-        ownKeys(Object(source), true).forEach(function (key) {
-          _defineProperty(target, key, source[key]);
-        });
-      } else if (Object.getOwnPropertyDescriptors) {
-        Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
-      } else {
-        ownKeys(Object(source)).forEach(function (key) {
-          Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
-        });
-      }
+      var source = null != arguments[i] ? arguments[i] : {};
+      i % 2 ? ownKeys(Object(source), !0).forEach(function (key) {
+        _defineProperty(target, key, source[key]);
+      }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) {
+        Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+      });
     }
-
     return target;
   }
-
   function _typeof(obj) {
     "@babel/helpers - typeof";
 
-    if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") {
-      _typeof = function (obj) {
-        return typeof obj;
-      };
-    } else {
-      _typeof = function (obj) {
-        return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-      };
-    }
-
-    return _typeof(obj);
+    return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) {
+      return typeof obj;
+    } : function (obj) {
+      return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+    }, _typeof(obj);
   }
-
   function _classCallCheck(instance, Constructor) {
     if (!(instance instanceof Constructor)) {
       throw new TypeError("Cannot call a class as a function");
     }
   }
-
   function _defineProperties(target, props) {
     for (var i = 0; i < props.length; i++) {
       var descriptor = props[i];
       descriptor.enumerable = descriptor.enumerable || false;
       descriptor.configurable = true;
       if ("value" in descriptor) descriptor.writable = true;
-      Object.defineProperty(target, descriptor.key, descriptor);
+      Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor);
     }
   }
-
   function _createClass(Constructor, protoProps, staticProps) {
     if (protoProps) _defineProperties(Constructor.prototype, protoProps);
     if (staticProps) _defineProperties(Constructor, staticProps);
+    Object.defineProperty(Constructor, "prototype", {
+      writable: false
+    });
     return Constructor;
   }
-
   function _defineProperty(obj, key, value) {
+    key = _toPropertyKey(key);
     if (key in obj) {
       Object.defineProperty(obj, key, {
         value: value,
@@ -65305,8 +65355,21 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     } else {
       obj[key] = value;
     }
-
     return obj;
+  }
+  function _toPrimitive(input, hint) {
+    if (typeof input !== "object" || input === null) return input;
+    var prim = input[Symbol.toPrimitive];
+    if (prim !== undefined) {
+      var res = prim.call(input, hint || "default");
+      if (typeof res !== "object") return res;
+      throw new TypeError("@@toPrimitive must return a primitive value.");
+    }
+    return (hint === "string" ? String : Number)(input);
+  }
+  function _toPropertyKey(arg) {
+    var key = _toPrimitive(arg, "string");
+    return typeof key === "symbol" ? key : String(key);
   }
 
   var DEFAULTS = {
@@ -65316,213 +65379,183 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      * @type {boolean}
      */
     backdrop: true,
-
     /**
      * Show the button on the top-right of the viewer.
      * @type {boolean}
      */
     button: true,
-
     /**
      * Show the navbar.
      * @type {boolean | number}
      */
     navbar: true,
-
     /**
      * Specify the visibility and the content of the title.
      * @type {boolean | number | Function | Array}
      */
     title: true,
-
     /**
      * Show the toolbar.
      * @type {boolean | number | Object}
      */
     toolbar: true,
-
     /**
      * Custom class name(s) to add to the viewer's root element.
      * @type {string}
      */
     className: '',
-
     /**
      * Define where to put the viewer in modal mode.
      * @type {string | Element}
      */
     container: 'body',
-
     /**
      * Filter the images for viewing. Return true if the image is viewable.
      * @type {Function}
      */
     filter: null,
-
     /**
      * Enable to request fullscreen when play.
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/FullscreenOptions}
      * @type {boolean|FullscreenOptions}
      */
     fullscreen: true,
-
     /**
      * Define the extra attributes to inherit from the original image.
      * @type {Array}
      */
     inheritedAttributes: ['crossOrigin', 'decoding', 'isMap', 'loading', 'referrerPolicy', 'sizes', 'srcset', 'useMap'],
-
     /**
-     * Define the initial index of image for viewing.
+     * Define the initial coverage of the viewing image.
+     * @type {number}
+     */
+    initialCoverage: 0.9,
+    /**
+     * Define the initial index of the image for viewing.
      * @type {number}
      */
     initialViewIndex: 0,
-
     /**
      * Enable inline mode.
      * @type {boolean}
      */
     inline: false,
-
     /**
      * The amount of time to delay between automatically cycling an image when playing.
      * @type {number}
      */
     interval: 5000,
-
     /**
      * Enable keyboard support.
      * @type {boolean}
      */
     keyboard: true,
-
     /**
      * Focus the viewer when initialized.
      * @type {boolean}
      */
     focus: true,
-
     /**
      * Indicate if show a loading spinner when load image or not.
      * @type {boolean}
      */
     loading: true,
-
     /**
      * Indicate if enable loop viewing or not.
      * @type {boolean}
      */
     loop: true,
-
     /**
      * Min width of the viewer in inline mode.
      * @type {number}
      */
     minWidth: 200,
-
     /**
      * Min height of the viewer in inline mode.
      * @type {number}
      */
     minHeight: 100,
-
     /**
      * Enable to move the image.
      * @type {boolean}
      */
     movable: true,
-
     /**
      * Enable to rotate the image.
      * @type {boolean}
      */
     rotatable: true,
-
     /**
      * Enable to scale the image.
      * @type {boolean}
      */
     scalable: true,
-
     /**
      * Enable to zoom the image.
      * @type {boolean}
      */
     zoomable: true,
-
     /**
      * Enable to zoom the current image by dragging on the touch screen.
      * @type {boolean}
      */
     zoomOnTouch: true,
-
     /**
      * Enable to zoom the image by wheeling mouse.
      * @type {boolean}
      */
     zoomOnWheel: true,
-
     /**
      * Enable to slide to the next or previous image by swiping on the touch screen.
      * @type {boolean}
      */
     slideOnTouch: true,
-
     /**
      * Indicate if toggle the image size between its natural size
      * and initial size when double click on the image or not.
      * @type {boolean}
      */
     toggleOnDblclick: true,
-
     /**
      * Show the tooltip with image ratio (percentage) when zoom in or zoom out.
      * @type {boolean}
      */
     tooltip: true,
-
     /**
      * Enable CSS3 Transition for some special elements.
      * @type {boolean}
      */
     transition: true,
-
     /**
      * Define the CSS `z-index` value of viewer in modal mode.
      * @type {number}
      */
     zIndex: 2015,
-
     /**
      * Define the CSS `z-index` value of viewer in inline mode.
      * @type {number}
      */
     zIndexInline: 0,
-
     /**
      * Define the ratio when zoom the image by wheeling mouse.
      * @type {number}
      */
     zoomRatio: 0.1,
-
     /**
      * Define the min ratio of the image when zoom out.
      * @type {number}
      */
     minZoomRatio: 0.01,
-
     /**
      * Define the max ratio of the image when zoom in.
      * @type {number}
      */
     maxZoomRatio: 100,
-
     /**
      * Define where to get the original image URL for viewing.
      * @type {string | Function}
      */
     url: 'src',
-
     /**
      * Event shortcuts.
      * @type {Function}
@@ -65552,12 +65585,14 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var WINDOW = IS_BROWSER ? window : {};
   var IS_TOUCH_DEVICE = IS_BROWSER && WINDOW.document.documentElement ? 'ontouchstart' in WINDOW.document.documentElement : false;
   var HAS_POINTER_EVENT = IS_BROWSER ? 'PointerEvent' in WINDOW : false;
-  var NAMESPACE = 'viewer'; // Actions
+  var NAMESPACE = 'viewer';
 
+  // Actions
   var ACTION_MOVE = 'move';
   var ACTION_SWITCH = 'switch';
-  var ACTION_ZOOM = 'zoom'; // Classes
+  var ACTION_ZOOM = 'zoom';
 
+  // Classes
   var CLASS_ACTIVE = "".concat(NAMESPACE, "-active");
   var CLASS_CLOSE = "".concat(NAMESPACE, "-close");
   var CLASS_FADE = "".concat(NAMESPACE, "-fade");
@@ -65574,14 +65609,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var CLASS_MOVE = "".concat(NAMESPACE, "-move");
   var CLASS_OPEN = "".concat(NAMESPACE, "-open");
   var CLASS_SHOW = "".concat(NAMESPACE, "-show");
-  var CLASS_TRANSITION = "".concat(NAMESPACE, "-transition"); // Native events
+  var CLASS_TRANSITION = "".concat(NAMESPACE, "-transition");
 
+  // Native events
   var EVENT_CLICK = 'click';
   var EVENT_DBLCLICK = 'dblclick';
   var EVENT_DRAG_START = 'dragstart';
   var EVENT_FOCUSIN = 'focusin';
   var EVENT_KEY_DOWN = 'keydown';
   var EVENT_LOAD = 'load';
+  var EVENT_ERROR = 'error';
   var EVENT_TOUCH_END = IS_TOUCH_DEVICE ? 'touchend touchcancel' : 'mouseup';
   var EVENT_TOUCH_MOVE = IS_TOUCH_DEVICE ? 'touchmove' : 'mousemove';
   var EVENT_TOUCH_START = IS_TOUCH_DEVICE ? 'touchstart' : 'mousedown';
@@ -65590,8 +65627,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var EVENT_POINTER_UP = HAS_POINTER_EVENT ? 'pointerup pointercancel' : EVENT_TOUCH_END;
   var EVENT_RESIZE = 'resize';
   var EVENT_TRANSITION_END = 'transitionend';
-  var EVENT_WHEEL = 'wheel'; // Custom events
+  var EVENT_WHEEL = 'wheel';
 
+  // Custom events
   var EVENT_READY = 'ready';
   var EVENT_SHOW = 'show';
   var EVENT_SHOWN = 'shown';
@@ -65608,12 +65646,15 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var EVENT_ZOOM = 'zoom';
   var EVENT_ZOOMED = 'zoomed';
   var EVENT_PLAY = 'play';
-  var EVENT_STOP = 'stop'; // Data keys
+  var EVENT_STOP = 'stop';
 
-  var DATA_ACTION = "".concat(NAMESPACE, "Action"); // RegExps
+  // Data keys
+  var DATA_ACTION = "".concat(NAMESPACE, "Action");
 
-  var REGEXP_SPACES = /\s\s*/; // Misc
+  // RegExps
+  var REGEXP_SPACES = /\s\s*/;
 
+  // Misc
   var BUTTONS = ['zoom-in', 'zoom-out', 'one-to-one', 'reset', 'prev', 'play', 'next', 'rotate-left', 'rotate-right', 'flip-horizontal', 'flip-vertical'];
 
   /**
@@ -65621,54 +65662,52 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is a string, else `false`.
    */
-
   function isString(value) {
     return typeof value === 'string';
   }
+
   /**
    * Check if the given value is not a number.
    */
-
   var isNaN = Number.isNaN || WINDOW.isNaN;
+
   /**
    * Check if the given value is a number.
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is a number, else `false`.
    */
-
   function isNumber(value) {
     return typeof value === 'number' && !isNaN(value);
   }
+
   /**
    * Check if the given value is undefined.
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is undefined, else `false`.
    */
-
   function isUndefined(value) {
     return typeof value === 'undefined';
   }
+
   /**
    * Check if the given value is an object.
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is an object, else `false`.
    */
-
   function isObject(value) {
     return _typeof(value) === 'object' && value !== null;
   }
   var hasOwnProperty = Object.prototype.hasOwnProperty;
+
   /**
    * Check if the given value is a plain object.
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is a plain object, else `false`.
    */
-
   function isPlainObject(value) {
     if (!isObject(value)) {
       return false;
     }
-
     try {
       var _constructor = value.constructor;
       var prototype = _constructor.prototype;
@@ -65677,30 +65716,27 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       return false;
     }
   }
+
   /**
    * Check if the given value is a function.
    * @param {*} value - The value to check.
    * @returns {boolean} Returns `true` if the given value is a function, else `false`.
    */
-
   function isFunction(value) {
     return typeof value === 'function';
   }
+
   /**
    * Iterate the given data.
    * @param {*} data - The data to iterate.
    * @param {Function} callback - The process function for each element.
    * @returns {*} The original data.
    */
-
   function forEach(data, callback) {
     if (data && isFunction(callback)) {
-      if (Array.isArray(data) || isNumber(data.length)
-      /* array-like */
-      ) {
+      if (Array.isArray(data) || isNumber(data.length) /* array-like */) {
         var length = data.length;
         var i;
-
         for (i = 0; i < length; i += 1) {
           if (callback.call(data, data[i], i, data) === false) {
             break;
@@ -65712,21 +65748,19 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         });
       }
     }
-
     return data;
   }
+
   /**
    * Extend the given object.
    * @param {*} obj - The object to be extended.
    * @param {*} args - The rest objects which will be merged to the first object.
    * @returns {Object} The extended object.
    */
-
   var assign = Object.assign || function assign(obj) {
     for (var _len = arguments.length, args = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
       args[_key - 1] = arguments[_key];
     }
-
     if (isObject(obj) && args.length > 0) {
       args.forEach(function (arg) {
         if (isObject(arg)) {
@@ -65736,127 +65770,116 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         }
       });
     }
-
     return obj;
   };
   var REGEXP_SUFFIX = /^(?:width|height|left|top|marginLeft|marginTop)$/;
+
   /**
    * Apply styles to the given element.
    * @param {Element} element - The target element.
    * @param {Object} styles - The styles for applying.
    */
-
   function setStyle(element, styles) {
     var style = element.style;
     forEach(styles, function (value, property) {
       if (REGEXP_SUFFIX.test(property) && isNumber(value)) {
         value += 'px';
       }
-
       style[property] = value;
     });
   }
+
   /**
    * Escape a string for using in HTML.
    * @param {String} value - The string to escape.
    * @returns {String} Returns the escaped string.
    */
-
   function escapeHTMLEntities(value) {
     return isString(value) ? value.replace(/&(?!amp;|quot;|#39;|lt;|gt;)/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : value;
   }
+
   /**
    * Check if the given element has a special class.
    * @param {Element} element - The element to check.
    * @param {string} value - The class to search.
    * @returns {boolean} Returns `true` if the special class was found.
    */
-
   function hasClass(element, value) {
     if (!element || !value) {
       return false;
     }
-
     return element.classList ? element.classList.contains(value) : element.className.indexOf(value) > -1;
   }
+
   /**
    * Add classes to the given element.
    * @param {Element} element - The target element.
    * @param {string} value - The classes to be added.
    */
-
   function addClass(element, value) {
     if (!element || !value) {
       return;
     }
-
     if (isNumber(element.length)) {
       forEach(element, function (elem) {
         addClass(elem, value);
       });
       return;
     }
-
     if (element.classList) {
       element.classList.add(value);
       return;
     }
-
     var className = element.className.trim();
-
     if (!className) {
       element.className = value;
     } else if (className.indexOf(value) < 0) {
       element.className = "".concat(className, " ").concat(value);
     }
   }
+
   /**
    * Remove classes from the given element.
    * @param {Element} element - The target element.
    * @param {string} value - The classes to be removed.
    */
-
   function removeClass(element, value) {
     if (!element || !value) {
       return;
     }
-
     if (isNumber(element.length)) {
       forEach(element, function (elem) {
         removeClass(elem, value);
       });
       return;
     }
-
     if (element.classList) {
       element.classList.remove(value);
       return;
     }
-
     if (element.className.indexOf(value) >= 0) {
       element.className = element.className.replace(value, '');
     }
   }
+
   /**
    * Add or remove classes from the given element.
    * @param {Element} element - The target element.
    * @param {string} value - The classes to be toggled.
    * @param {boolean} added - Add only.
    */
-
   function toggleClass(element, value, added) {
     if (!value) {
       return;
     }
-
     if (isNumber(element.length)) {
       forEach(element, function (elem) {
         toggleClass(elem, value, added);
       });
       return;
-    } // IE10-11 doesn't support the second parameter of `classList.toggle`
+    }
 
-
+    // IE10-11 doesn't support the second parameter of `classList.toggle`
     if (added) {
       addClass(element, value);
     } else {
@@ -65864,40 +65887,38 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     }
   }
   var REGEXP_HYPHENATE = /([a-z\d])([A-Z])/g;
+
   /**
    * Transform the given string from camelCase to kebab-case
    * @param {string} value - The value to transform.
    * @returns {string} The transformed value.
    */
-
   function hyphenate(value) {
     return value.replace(REGEXP_HYPHENATE, '$1-$2').toLowerCase();
   }
+
   /**
    * Get data from the given element.
    * @param {Element} element - The target element.
    * @param {string} name - The data key to get.
    * @returns {string} The data value.
    */
-
   function getData(element, name) {
     if (isObject(element[name])) {
       return element[name];
     }
-
     if (element.dataset) {
       return element.dataset[name];
     }
-
     return element.getAttribute("data-".concat(hyphenate(name)));
   }
+
   /**
    * Set data to the given element.
    * @param {Element} element - The target element.
    * @param {string} name - The data key to set.
    * @param {string} data - The data value.
    */
-
   function setData(element, name, data) {
     if (isObject(data)) {
       element[name] = data;
@@ -65907,21 +65928,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       element.setAttribute("data-".concat(hyphenate(name)), data);
     }
   }
-
   var onceSupported = function () {
     var supported = false;
-
     if (IS_BROWSER) {
       var once = false;
-
       var listener = function listener() {};
-
       var options = Object.defineProperty({}, 'once', {
         get: function get() {
           supported = true;
           return once;
         },
-
         /**
          * This setter can fix a `TypeError` in strict mode
          * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Errors/Getter_only}
@@ -65934,9 +65950,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       WINDOW.addEventListener('test', listener, options);
       WINDOW.removeEventListener('test', listener, options);
     }
-
     return supported;
   }();
+
   /**
    * Remove event listener from the target element.
    * @param {Element} element - The event target.
@@ -65944,32 +65960,27 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * @param {Function} listener - The event listener.
    * @param {Object} options - The event options.
    */
-
-
   function removeListener(element, type, listener) {
     var options = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : {};
     var handler = listener;
     type.trim().split(REGEXP_SPACES).forEach(function (event) {
       if (!onceSupported) {
         var listeners = element.listeners;
-
         if (listeners && listeners[event] && listeners[event][listener]) {
           handler = listeners[event][listener];
           delete listeners[event][listener];
-
           if (Object.keys(listeners[event]).length === 0) {
             delete listeners[event];
           }
-
           if (Object.keys(listeners).length === 0) {
             delete element.listeners;
           }
         }
       }
-
       element.removeEventListener(event, handler, options);
     });
   }
+
   /**
    * Add event listener to the target element.
    * @param {Element} element - The event target.
@@ -65977,41 +65988,34 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * @param {Function} listener - The event listener.
    * @param {Object} options - The event options.
    */
-
   function addListener(element, type, listener) {
     var options = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : {};
     var _handler = listener;
     type.trim().split(REGEXP_SPACES).forEach(function (event) {
       if (options.once && !onceSupported) {
         var _element$listeners = element.listeners,
-            listeners = _element$listeners === void 0 ? {} : _element$listeners;
-
+          listeners = _element$listeners === void 0 ? {} : _element$listeners;
         _handler = function handler() {
           delete listeners[event][listener];
           element.removeEventListener(event, _handler, options);
-
           for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
             args[_key2] = arguments[_key2];
           }
-
           listener.apply(element, args);
         };
-
         if (!listeners[event]) {
           listeners[event] = {};
         }
-
         if (listeners[event][listener]) {
           element.removeEventListener(event, listeners[event][listener], options);
         }
-
         listeners[event][listener] = _handler;
         element.listeners = listeners;
       }
-
       element.addEventListener(event, _handler, options);
     });
   }
+
   /**
    * Dispatch event on the target element.
    * @param {Element} element - The event target.
@@ -66020,10 +66024,10 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * @param {Object} options - The additional event options.
    * @returns {boolean} Indicate if the event is default prevented or not.
    */
-
   function dispatchEvent(element, type, data, options) {
-    var event; // Event and CustomEvent on IE9-11 are global objects, not constructors
+    var event;
 
+    // Event and CustomEvent on IE9-11 are global objects, not constructors
     if (isFunction(Event) && isFunction(CustomEvent)) {
       event = new CustomEvent(type, _objectSpread2({
         bubbles: true,
@@ -66034,15 +66038,14 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       event = document.createEvent('CustomEvent');
       event.initCustomEvent(type, true, true, data);
     }
-
     return element.dispatchEvent(event);
   }
+
   /**
    * Get the offset base on the document.
    * @param {Element} element - The target element.
    * @returns {Object} The offset data.
    */
-
   function getOffset(element) {
     var box = element.getBoundingClientRect();
     return {
@@ -66050,41 +66053,36 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       top: box.top + (window.pageYOffset - document.documentElement.clientTop)
     };
   }
+
   /**
    * Get transforms base on the given object.
    * @param {Object} obj - The target object.
    * @returns {string} A string contains transform values.
    */
-
   function getTransforms(_ref) {
     var rotate = _ref.rotate,
-        scaleX = _ref.scaleX,
-        scaleY = _ref.scaleY,
-        translateX = _ref.translateX,
-        translateY = _ref.translateY;
+      scaleX = _ref.scaleX,
+      scaleY = _ref.scaleY,
+      translateX = _ref.translateX,
+      translateY = _ref.translateY;
     var values = [];
-
     if (isNumber(translateX) && translateX !== 0) {
       values.push("translateX(".concat(translateX, "px)"));
     }
-
     if (isNumber(translateY) && translateY !== 0) {
       values.push("translateY(".concat(translateY, "px)"));
-    } // Rotate should come first before scale to match orientation transform
+    }
 
-
+    // Rotate should come first before scale to match orientation transform
     if (isNumber(rotate) && rotate !== 0) {
       values.push("rotate(".concat(rotate, "deg)"));
     }
-
     if (isNumber(scaleX) && scaleX !== 1) {
       values.push("scaleX(".concat(scaleX, ")"));
     }
-
     if (isNumber(scaleY) && scaleY !== 1) {
       values.push("scaleY(".concat(scaleY, ")"));
     }
-
     var transform = values.length ? values.join(' ') : 'none';
     return {
       WebkitTransform: transform,
@@ -66092,6 +66090,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       transform: transform
     };
   }
+
   /**
    * Get an image name from an image url.
    * @param {string} url - The target url.
@@ -66100,11 +66099,11 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * getImageNameFromURL('https://domain.com/path/to/picture.jpg?size=1280×960')
    * @returns {string} A string contains the image name.
    */
-
   function getImageNameFromURL(url) {
     return isString(url) ? decodeURIComponent(url.replace(/^.*\//, '').replace(/[?&#].*$/, '')) : '';
   }
   var IS_SAFARI = WINDOW.navigator && /(Macintosh|iPhone|iPod|iPad).*AppleWebKit/i.test(WINDOW.navigator.userAgent);
+
   /**
    * Get an image's natural sizes.
    * @param {string} image - The target image.
@@ -66112,72 +66111,63 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
    * @param {Function} callback - The callback function.
    * @returns {HTMLImageElement} The new image.
    */
-
   function getImageNaturalSizes(image, options, callback) {
-    var newImage = document.createElement('img'); // Modern browsers (except Safari)
+    var newImage = document.createElement('img');
 
+    // Modern browsers (except Safari)
     if (image.naturalWidth && !IS_SAFARI) {
       callback(image.naturalWidth, image.naturalHeight);
       return newImage;
     }
-
     var body = document.body || document.documentElement;
-
     newImage.onload = function () {
       callback(newImage.width, newImage.height);
-
       if (!IS_SAFARI) {
         body.removeChild(newImage);
       }
     };
-
     forEach(options.inheritedAttributes, function (name) {
       var value = image.getAttribute(name);
-
       if (value !== null) {
         newImage.setAttribute(name, value);
       }
     });
-    newImage.src = image.src; // iOS Safari will convert the image automatically
-    // with its orientation once append it into DOM
+    newImage.src = image.src;
 
+    // iOS Safari will convert the image automatically
+    // with its orientation once append it into DOM
     if (!IS_SAFARI) {
       newImage.style.cssText = 'left:0;' + 'max-height:none!important;' + 'max-width:none!important;' + 'min-height:0!important;' + 'min-width:0!important;' + 'opacity:0;' + 'position:absolute;' + 'top:0;' + 'z-index:-1;';
       body.appendChild(newImage);
     }
-
     return newImage;
   }
+
   /**
    * Get the related class name of a responsive type number.
    * @param {string} type - The responsive type.
    * @returns {string} The related class name.
    */
-
   function getResponsiveClass(type) {
     switch (type) {
       case 2:
         return CLASS_HIDE_XS_DOWN;
-
       case 3:
         return CLASS_HIDE_SM_DOWN;
-
       case 4:
         return CLASS_HIDE_MD_DOWN;
-
       default:
         return '';
     }
   }
+
   /**
    * Get the max ratio of a group of pointers.
    * @param {string} pointers - The target pointers.
    * @returns {number} The result ratio.
    */
-
   function getMaxZoomRatio(pointers) {
     var pointers2 = _objectSpread2({}, pointers);
-
     var ratios = [];
     forEach(pointers, function (pointer, pointerId) {
       delete pointers2[pointerId];
@@ -66197,16 +66187,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     });
     return ratios[0];
   }
+
   /**
    * Get a pointer from an event object.
    * @param {Object} event - The target event object.
    * @param {boolean} endOnly - Indicates if only returns the end point coordinate or not.
    * @returns {Object} The result pointer contains start and/or end point coordinates.
    */
-
   function getPointer(_ref2, endOnly) {
     var pageX = _ref2.pageX,
-        pageY = _ref2.pageY;
+      pageY = _ref2.pageY;
     var end = {
       endX: pageX,
       endY: pageY
@@ -66217,19 +66207,19 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       startY: pageY
     }, end);
   }
+
   /**
    * Get the center point coordinate of a group of pointers.
    * @param {Object} pointers - The target pointers.
    * @returns {Object} The center point coordinate.
    */
-
   function getPointersCenter(pointers) {
     var pageX = 0;
     var pageY = 0;
     var count = 0;
     forEach(pointers, function (_ref3) {
       var startX = _ref3.startX,
-          startY = _ref3.startY;
+        startY = _ref3.startY;
       pageX += startX;
       pageY += startY;
       count += 1;
@@ -66265,9 +66255,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     initViewer: function initViewer() {
       var options = this.options,
-          parent = this.parent;
+        parent = this.parent;
       var viewerData;
-
       if (options.inline) {
         viewerData = {
           width: Math.max(parent.offsetWidth, options.minWidth),
@@ -66275,11 +66264,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         };
         this.parentData = viewerData;
       }
-
       if (this.fulled || !viewerData) {
         viewerData = this.containerData;
       }
-
       this.viewerData = assign({}, viewerData);
     },
     renderViewer: function renderViewer() {
@@ -66289,40 +66276,37 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     initList: function initList() {
       var _this = this;
-
       var element = this.element,
-          options = this.options,
-          list = this.list;
-      var items = []; // initList may be called in this.update, so should keep idempotent
+        options = this.options,
+        list = this.list;
+      var items = [];
 
+      // initList may be called in this.update, so should keep idempotent
       list.innerHTML = '';
       forEach(this.images, function (image, index) {
         var src = image.src;
         var alt = image.alt || getImageNameFromURL(src);
-
         var url = _this.getImageURL(image);
-
         if (src || url) {
           var item = document.createElement('li');
           var img = document.createElement('img');
           forEach(options.inheritedAttributes, function (name) {
             var value = image.getAttribute(name);
-
             if (value !== null) {
               img.setAttribute(name, value);
             }
           });
-          img.src = src || url;
+          if (options.navbar) {
+            img.src = src || url;
+          }
           img.alt = alt;
           img.setAttribute('data-original-url', url || src);
           item.setAttribute('data-index', index);
           item.setAttribute('data-viewer-action', 'view');
           item.setAttribute('role', 'button');
-
           if (options.keyboard) {
             item.setAttribute('tabindex', 0);
           }
-
           item.appendChild(img);
           list.appendChild(item);
           items.push(item);
@@ -66331,23 +66315,30 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.items = items;
       forEach(items, function (item) {
         var image = item.firstElementChild;
+        var onLoad;
+        var onError;
         setData(image, 'filled', true);
-
         if (options.loading) {
           addClass(item, CLASS_LOADING);
         }
-
-        addListener(image, EVENT_LOAD, function (event) {
+        addListener(image, EVENT_LOAD, onLoad = function onLoad(event) {
+          removeListener(image, EVENT_ERROR, onError);
           if (options.loading) {
             removeClass(item, CLASS_LOADING);
           }
-
           _this.loadImage(event);
         }, {
           once: true
         });
+        addListener(image, EVENT_ERROR, onError = function onError() {
+          removeListener(image, EVENT_LOAD, onLoad);
+          if (options.loading) {
+            removeClass(item, CLASS_LOADING);
+          }
+        }, {
+          once: true
+        });
       });
-
       if (options.transition) {
         addListener(element, EVENT_VIEWED, function () {
           addClass(list, CLASS_TRANSITION);
@@ -66359,11 +66350,15 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     renderList: function renderList() {
       var index = this.index;
       var item = this.items[index];
+      if (!item) {
+        return;
+      }
       var next = item.nextElementSibling;
       var gutter = parseInt(window.getComputedStyle(next || item).marginLeft, 10);
       var offsetWidth = item.offsetWidth;
-      var outerWidth = offsetWidth + gutter; // Place the active item in the center of the screen
+      var outerWidth = offsetWidth + gutter;
 
+      // Place the active item in the center of the screen
       setStyle(this.list, assign({
         width: outerWidth * this.length - gutter
       }, getTransforms({
@@ -66380,10 +66375,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     initImage: function initImage(done) {
       var _this2 = this;
-
       var options = this.options,
-          image = this.image,
-          viewerData = this.viewerData;
+        image = this.image,
+        viewerData = this.viewerData;
       var footerHeight = this.footer.offsetHeight;
       var viewerWidth = viewerData.width;
       var viewerHeight = Math.max(viewerData.height - footerHeight, footerHeight);
@@ -66396,18 +66390,18 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       };
       sizingImage = getImageNaturalSizes(image, options, function (naturalWidth, naturalHeight) {
         var aspectRatio = naturalWidth / naturalHeight;
+        var initialCoverage = Math.max(0, Math.min(1, options.initialCoverage));
         var width = viewerWidth;
         var height = viewerHeight;
         _this2.imageInitializing = false;
-
         if (viewerHeight * aspectRatio > viewerWidth) {
           height = viewerWidth / aspectRatio;
         } else {
           width = viewerHeight * aspectRatio;
         }
-
-        width = Math.min(width * 0.9, naturalWidth);
-        height = Math.min(height * 0.9, naturalHeight);
+        initialCoverage = isNumber(initialCoverage) ? initialCoverage : 0.9;
+        width = Math.min(width * initialCoverage, naturalWidth);
+        height = Math.min(height * initialCoverage, naturalHeight);
         var left = (viewerWidth - width) / 2;
         var top = (viewerHeight - height) / 2;
         var imageData = {
@@ -66424,22 +66418,18 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           naturalHeight: naturalHeight
         };
         var initialImageData = assign({}, imageData);
-
         if (options.rotatable) {
           imageData.rotate = oldImageData.rotate || 0;
           initialImageData.rotate = 0;
         }
-
         if (options.scalable) {
           imageData.scaleX = oldImageData.scaleX || 1;
           imageData.scaleY = oldImageData.scaleY || 1;
           initialImageData.scaleX = 1;
           initialImageData.scaleY = 1;
         }
-
         _this2.imageData = imageData;
         _this2.initialImageData = initialImageData;
-
         if (done) {
           done();
         }
@@ -66447,9 +66437,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     renderImage: function renderImage(done) {
       var _this3 = this;
-
       var image = this.image,
-          imageData = this.imageData;
+        imageData = this.imageData;
       setStyle(image, assign({
         width: imageData.width,
         height: imageData.height,
@@ -66457,14 +66446,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         marginLeft: imageData.x,
         marginTop: imageData.y
       }, getTransforms(imageData)));
-
       if (done) {
         if ((this.viewing || this.moving || this.rotating || this.scaling || this.zooming) && this.options.transition && hasClass(image, CLASS_TRANSITION)) {
           var onTransitionEnd = function onTransitionEnd() {
             _this3.imageRendering = false;
             done();
           };
-
           this.imageRendering = {
             abort: function abort() {
               removeListener(image, EVENT_TRANSITION_END, onTransitionEnd);
@@ -66482,11 +66469,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       // this.image only defined after viewed
       if (this.viewing || this.viewed) {
         var image = this.image;
-
         if (this.viewing) {
           this.viewing.abort();
         }
-
         image.parentNode.removeChild(image);
         this.image = null;
       }
@@ -66496,8 +66481,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var events = {
     bind: function bind() {
       var options = this.options,
-          viewer = this.viewer,
-          canvas = this.canvas;
+        viewer = this.viewer,
+        canvas = this.canvas;
       var document = this.element.ownerDocument;
       addListener(viewer, EVENT_CLICK, this.onClick = this.click.bind(this));
       addListener(viewer, EVENT_DRAG_START, this.onDragStart = this.dragstart.bind(this));
@@ -66506,22 +66491,20 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       addListener(document, EVENT_POINTER_UP, this.onPointerUp = this.pointerup.bind(this));
       addListener(document, EVENT_KEY_DOWN, this.onKeyDown = this.keydown.bind(this));
       addListener(window, EVENT_RESIZE, this.onResize = this.resize.bind(this));
-
       if (options.zoomable && options.zoomOnWheel) {
         addListener(viewer, EVENT_WHEEL, this.onWheel = this.wheel.bind(this), {
           passive: false,
           capture: true
         });
       }
-
       if (options.toggleOnDblclick) {
         addListener(canvas, EVENT_DBLCLICK, this.onDblclick = this.dblclick.bind(this));
       }
     },
     unbind: function unbind() {
       var options = this.options,
-          viewer = this.viewer,
-          canvas = this.canvas;
+        viewer = this.viewer,
+        canvas = this.canvas;
       var document = this.element.ownerDocument;
       removeListener(viewer, EVENT_CLICK, this.onClick);
       removeListener(viewer, EVENT_DRAG_START, this.onDragStart);
@@ -66530,14 +66513,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       removeListener(document, EVENT_POINTER_UP, this.onPointerUp);
       removeListener(document, EVENT_KEY_DOWN, this.onKeyDown);
       removeListener(window, EVENT_RESIZE, this.onResize);
-
       if (options.zoomable && options.zoomOnWheel) {
         removeListener(viewer, EVENT_WHEEL, this.onWheel, {
           passive: false,
           capture: true
         });
       }
-
       if (options.toggleOnDblclick) {
         removeListener(canvas, EVENT_DBLCLICK, this.onDblclick);
       }
@@ -66547,20 +66528,18 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var handlers = {
     click: function click(event) {
       var options = this.options,
-          imageData = this.imageData;
+        imageData = this.imageData;
       var target = event.target;
       var action = getData(target, DATA_ACTION);
-
       if (!action && target.localName === 'img' && target.parentElement.localName === 'li') {
         target = target.parentElement;
         action = getData(target, DATA_ACTION);
-      } // Cancel the emulated click when the native click event was triggered.
+      }
 
-
+      // Cancel the emulated click when the native click event was triggered.
       if (IS_TOUCH_DEVICE && event.isTrusted && target === this.canvas) {
         clearTimeout(this.clickCanvasTimeout);
       }
-
       switch (action) {
         case 'mix':
           if (this.played) {
@@ -66574,114 +66553,93 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           } else {
             this.hide();
           }
-
           break;
-
         case 'hide':
-          this.hide();
+          if (!this.pointerMoved) {
+            this.hide();
+          }
           break;
-
         case 'view':
           this.view(getData(target, 'index'));
           break;
-
         case 'zoom-in':
           this.zoom(0.1, true);
           break;
-
         case 'zoom-out':
           this.zoom(-0.1, true);
           break;
-
         case 'one-to-one':
           this.toggle();
           break;
-
         case 'reset':
           this.reset();
           break;
-
         case 'prev':
           this.prev(options.loop);
           break;
-
         case 'play':
           this.play(options.fullscreen);
           break;
-
         case 'next':
           this.next(options.loop);
           break;
-
         case 'rotate-left':
           this.rotate(-90);
           break;
-
         case 'rotate-right':
           this.rotate(90);
           break;
-
         case 'flip-horizontal':
           this.scaleX(-imageData.scaleX || -1);
           break;
-
         case 'flip-vertical':
           this.scaleY(-imageData.scaleY || -1);
           break;
-
         default:
           if (this.played) {
             this.stop();
           }
-
       }
     },
     dblclick: function dblclick(event) {
       event.preventDefault();
-
       if (this.viewed && event.target === this.image) {
         // Cancel the emulated double click when the native dblclick event was triggered.
         if (IS_TOUCH_DEVICE && event.isTrusted) {
           clearTimeout(this.doubleClickImageTimeout);
         }
 
-        this.toggle(event);
+        // XXX: No pageX/Y properties in custom event, fallback to the original event.
+        this.toggle(event.isTrusted ? event : event.detail && event.detail.originalEvent);
       }
     },
     load: function load() {
       var _this = this;
-
       if (this.timeout) {
         clearTimeout(this.timeout);
         this.timeout = false;
       }
-
       var element = this.element,
-          options = this.options,
-          image = this.image,
-          index = this.index,
-          viewerData = this.viewerData;
+        options = this.options,
+        image = this.image,
+        index = this.index,
+        viewerData = this.viewerData;
       removeClass(image, CLASS_INVISIBLE);
-
       if (options.loading) {
         removeClass(this.canvas, CLASS_LOADING);
       }
-
       image.style.cssText = 'height:0;' + "margin-left:".concat(viewerData.width / 2, "px;") + "margin-top:".concat(viewerData.height / 2, "px;") + 'max-width:none!important;' + 'position:relative;' + 'width:0;';
       this.initImage(function () {
         toggleClass(image, CLASS_MOVE, options.movable);
         toggleClass(image, CLASS_TRANSITION, options.transition);
-
         _this.renderImage(function () {
           _this.viewed = true;
           _this.viewing = false;
-
           if (isFunction(options.viewed)) {
             addListener(element, EVENT_VIEWED, options.viewed, {
               once: true
             });
           }
-
           dispatchEvent(element, EVENT_VIEWED, {
             originalImage: _this.images[index],
             index: index,
@@ -66702,7 +66660,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         var aspectRatio = naturalWidth / naturalHeight;
         var width = parentWidth;
         var height = parentHeight;
-
         if (parentHeight * aspectRatio > parentWidth) {
           if (filled) {
             width = parentHeight * aspectRatio;
@@ -66714,7 +66671,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         } else {
           width = parentHeight * aspectRatio;
         }
-
         setStyle(image, assign({
           width: width,
           height: height
@@ -66726,27 +66682,21 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     keydown: function keydown(event) {
       var options = this.options;
-
       if (!options.keyboard) {
         return;
       }
-
       var keyCode = event.keyCode || event.which || event.charCode;
-
       switch (keyCode) {
         // Enter
         case 13:
           if (this.viewer.contains(event.target)) {
             this.click(event);
           }
-
           break;
       }
-
       if (!this.fulled) {
         return;
       }
-
       switch (keyCode) {
         // Escape
         case 27:
@@ -66759,54 +66709,62 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           } else {
             this.hide();
           }
-
           break;
-        // Space
 
+        // Space
         case 32:
           if (this.played) {
             this.stop();
           }
-
           break;
+
         // ArrowLeft
-
         case 37:
-          this.prev(options.loop);
+          if (this.played && this.playing) {
+            this.playing.prev();
+          } else {
+            this.prev(options.loop);
+          }
           break;
-        // ArrowUp
 
+        // ArrowUp
         case 38:
           // Prevent scroll on Firefox
-          event.preventDefault(); // Zoom in
+          event.preventDefault();
 
+          // Zoom in
           this.zoom(options.zoomRatio, true);
           break;
+
         // ArrowRight
-
         case 39:
-          this.next(options.loop);
+          if (this.played && this.playing) {
+            this.playing.next();
+          } else {
+            this.next(options.loop);
+          }
           break;
-        // ArrowDown
 
+        // ArrowDown
         case 40:
           // Prevent scroll on Firefox
-          event.preventDefault(); // Zoom out
+          event.preventDefault();
 
+          // Zoom out
           this.zoom(-options.zoomRatio, true);
           break;
-        // Ctrl + 0
 
-        case 48: // Fall through
+        // Ctrl + 0
+        case 48:
+        // Fall through
+
         // Ctrl + 1
         // eslint-disable-next-line no-fallthrough
-
         case 49:
           if (event.ctrlKey) {
             event.preventDefault();
             this.toggle();
           }
-
           break;
       }
     },
@@ -66817,20 +66775,24 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     pointerdown: function pointerdown(event) {
       var options = this.options,
-          pointers = this.pointers;
+        pointers = this.pointers;
       var buttons = event.buttons,
-          button = event.button;
+        button = event.button;
+      this.pointerMoved = false;
+      if (!this.viewed || this.showing || this.viewing || this.hiding
 
-      if (!this.viewed || this.showing || this.viewing || this.hiding // Handle mouse event and pointer event and ignore touch event
-      || (event.type === 'mousedown' || event.type === 'pointerdown' && event.pointerType === 'mouse') && ( // No primary button (Usually the left button)
-      isNumber(buttons) && buttons !== 1 || isNumber(button) && button !== 0 // Open context menu
+      // Handle mouse event and pointer event and ignore touch event
+      || (event.type === 'mousedown' || event.type === 'pointerdown' && event.pointerType === 'mouse') && (
+      // No primary button (Usually the left button)
+      isNumber(buttons) && buttons !== 1 || isNumber(button) && button !== 0
+
+      // Open context menu
       || event.ctrlKey)) {
         return;
-      } // Prevent default behaviours as page zooming in touch devices.
+      }
 
-
+      // Prevent default behaviours as page zooming in touch devices.
       event.preventDefault();
-
       if (event.changedTouches) {
         forEach(event.changedTouches, function (touch) {
           pointers[touch.identifier] = getPointer(touch);
@@ -66838,31 +66800,24 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else {
         pointers[event.pointerId || 0] = getPointer(event);
       }
-
       var action = options.movable ? ACTION_MOVE : false;
-
       if (options.zoomOnTouch && options.zoomable && Object.keys(pointers).length > 1) {
         action = ACTION_ZOOM;
       } else if (options.slideOnTouch && (event.pointerType === 'touch' || event.type === 'touchstart') && this.isSwitchable()) {
         action = ACTION_SWITCH;
       }
-
       if (options.transition && (action === ACTION_MOVE || action === ACTION_ZOOM)) {
         removeClass(this.image, CLASS_TRANSITION);
       }
-
       this.action = action;
     },
     pointermove: function pointermove(event) {
       var pointers = this.pointers,
-          action = this.action;
-
+        action = this.action;
       if (!this.viewed || !action) {
         return;
       }
-
       event.preventDefault();
-
       if (event.changedTouches) {
         forEach(event.changedTouches, function (touch) {
           assign(pointers[touch.identifier] || {}, getPointer(touch, true));
@@ -66870,17 +66825,14 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else {
         assign(pointers[event.pointerId || 0] || {}, getPointer(event, true));
       }
-
       this.change(event);
     },
     pointerup: function pointerup(event) {
       var _this2 = this;
-
       var options = this.options,
-          action = this.action,
-          pointers = this.pointers;
+        action = this.action,
+        pointers = this.pointers;
       var pointer;
-
       if (event.changedTouches) {
         forEach(event.changedTouches, function (touch) {
           pointer = pointers[touch.identifier];
@@ -66890,44 +66842,45 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         pointer = pointers[event.pointerId || 0];
         delete pointers[event.pointerId || 0];
       }
-
       if (!action) {
         return;
       }
-
       event.preventDefault();
-
       if (options.transition && (action === ACTION_MOVE || action === ACTION_ZOOM)) {
         addClass(this.image, CLASS_TRANSITION);
       }
+      this.action = false;
 
-      this.action = false; // Emulate click and double click in touch devices to support backdrop and image zooming (#210).
-
+      // Emulate click and double click in touch devices to support backdrop and image zooming (#210).
       if (IS_TOUCH_DEVICE && action !== ACTION_ZOOM && pointer && Date.now() - pointer.timeStamp < 500) {
         clearTimeout(this.clickCanvasTimeout);
         clearTimeout(this.doubleClickImageTimeout);
-
         if (options.toggleOnDblclick && this.viewed && event.target === this.image) {
           if (this.imageClicked) {
-            this.imageClicked = false; // This timeout will be cleared later when a native dblclick event is triggering
+            this.imageClicked = false;
 
+            // This timeout will be cleared later when a native dblclick event is triggering
             this.doubleClickImageTimeout = setTimeout(function () {
-              dispatchEvent(_this2.image, EVENT_DBLCLICK);
+              dispatchEvent(_this2.image, EVENT_DBLCLICK, {
+                originalEvent: event
+              });
             }, 50);
           } else {
-            this.imageClicked = true; // The default timing of a double click in Windows is 500 ms
+            this.imageClicked = true;
 
+            // The default timing of a double click in Windows is 500 ms
             this.doubleClickImageTimeout = setTimeout(function () {
               _this2.imageClicked = false;
             }, 500);
           }
         } else {
           this.imageClicked = false;
-
           if (options.backdrop && options.backdrop !== 'static' && event.target === this.canvas) {
             // This timeout will be cleared later when a native click event is triggering
             this.clickCanvasTimeout = setTimeout(function () {
-              dispatchEvent(_this2.canvas, EVENT_CLICK);
+              dispatchEvent(_this2.canvas, EVENT_CLICK, {
+                originalEvent: event
+              });
             }, 50);
           }
         }
@@ -66935,34 +66888,28 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     resize: function resize() {
       var _this3 = this;
-
       if (!this.isShown || this.hiding) {
         return;
       }
-
       if (this.fulled) {
         this.close();
         this.initBody();
         this.open();
       }
-
       this.initContainer();
       this.initViewer();
       this.renderViewer();
       this.renderList();
-
       if (this.viewed) {
         this.initImage(function () {
           _this3.renderImage();
         });
       }
-
       if (this.played) {
         if (this.options.fullscreen && this.fulled && !(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement)) {
           this.stop();
           return;
         }
-
         forEach(this.player.getElementsByTagName('img'), function (image) {
           addListener(image, EVENT_LOAD, _this3.loadImage.bind(_this3), {
             once: true
@@ -66973,24 +66920,21 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     wheel: function wheel(event) {
       var _this4 = this;
-
       if (!this.viewed) {
         return;
       }
+      event.preventDefault();
 
-      event.preventDefault(); // Limit wheel speed to prevent zoom too fast
-
+      // Limit wheel speed to prevent zoom too fast
       if (this.wheeling) {
         return;
       }
-
       this.wheeling = true;
       setTimeout(function () {
         _this4.wheeling = false;
       }, 50);
       var ratio = Number(this.options.zoomRatio) || 0.1;
       var delta = 1;
-
       if (event.deltaY) {
         delta = event.deltaY > 0 ? 1 : -1;
       } else if (event.wheelDelta) {
@@ -66998,8 +66942,7 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else if (event.detail) {
         delta = event.detail > 0 ? 1 : -1;
       }
-
-      this.zoom(-delta * ratio, true, event);
+      this.zoom(-delta * ratio, true, null, event);
     }
   };
 
@@ -67011,36 +66954,28 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     show: function show() {
       var immediate = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
       var element = this.element,
-          options = this.options;
-
+        options = this.options;
       if (options.inline || this.showing || this.isShown || this.showing) {
         return this;
       }
-
       if (!this.ready) {
         this.build();
-
         if (this.ready) {
           this.show(immediate);
         }
-
         return this;
       }
-
       if (isFunction(options.show)) {
         addListener(element, EVENT_SHOW, options.show, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_SHOW) === false || !this.ready) {
         return this;
       }
-
       if (this.hiding) {
         this.transitioning.abort();
       }
-
       this.showing = true;
       this.open();
       var viewer = this.viewer;
@@ -67049,7 +66984,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       viewer.setAttribute('aria-labelledby', this.title.id);
       viewer.setAttribute('aria-modal', true);
       viewer.removeAttribute('aria-hidden');
-
       if (options.transition && !immediate) {
         var shown = this.shown.bind(this);
         this.transitioning = {
@@ -67058,8 +66992,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             removeClass(viewer, CLASS_IN);
           }
         };
-        addClass(viewer, CLASS_TRANSITION); // Force reflow to enable CSS3 transition
+        addClass(viewer, CLASS_TRANSITION);
 
+        // Force reflow to enable CSS3 transition
         viewer.initialOffsetWidth = viewer.offsetWidth;
         addListener(viewer, EVENT_TRANSITION_END, shown, {
           once: true
@@ -67069,10 +67004,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         addClass(viewer, CLASS_IN);
         this.shown();
       }
-
       return this;
     },
-
     /**
      * Hide the viewer (only available in modal mode)
      * @param {boolean} [immediate=false] - Indicates if hide the viewer immediately or not.
@@ -67080,56 +67013,43 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     hide: function hide() {
       var _this = this;
-
       var immediate = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
       var element = this.element,
-          options = this.options;
-
+        options = this.options;
       if (options.inline || this.hiding || !(this.isShown || this.showing)) {
         return this;
       }
-
       if (isFunction(options.hide)) {
         addListener(element, EVENT_HIDE, options.hide, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_HIDE) === false) {
         return this;
       }
-
       if (this.showing) {
         this.transitioning.abort();
       }
-
       this.hiding = true;
-
       if (this.played) {
         this.stop();
       } else if (this.viewing) {
         this.viewing.abort();
       }
-
       var viewer = this.viewer,
-          image = this.image;
-
+        image = this.image;
       var hideImmediately = function hideImmediately() {
         removeClass(viewer, CLASS_IN);
-
         _this.hidden();
       };
-
       if (options.transition && !immediate) {
         var onViewerTransitionEnd = function onViewerTransitionEnd(event) {
           // Ignore all propagating `transitionend` events (#275).
           if (event && event.target === viewer) {
             removeListener(viewer, EVENT_TRANSITION_END, onViewerTransitionEnd);
-
             _this.hidden();
           }
         };
-
         var onImageTransitionEnd = function onImageTransitionEnd() {
           // In case of show the viewer by `viewer.show(true)` previously (#407).
           if (hasClass(viewer, CLASS_TRANSITION)) {
@@ -67139,7 +67059,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             hideImmediately();
           }
         };
-
         this.transitioning = {
           abort: function abort() {
             if (_this.viewed && hasClass(image, CLASS_TRANSITION)) {
@@ -67148,24 +67067,23 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
               removeListener(viewer, EVENT_TRANSITION_END, onViewerTransitionEnd);
             }
           }
-        }; // In case of hiding the viewer when holding on the image (#255),
-        // note that the `CLASS_TRANSITION` class will be removed on pointer down.
+        };
 
+        // In case of hiding the viewer when holding on the image (#255),
+        // note that the `CLASS_TRANSITION` class will be removed on pointer down.
         if (this.viewed && hasClass(image, CLASS_TRANSITION)) {
           addListener(image, EVENT_TRANSITION_END, onImageTransitionEnd, {
             once: true
           });
-          this.zoomTo(0, false, null, true);
+          this.zoomTo(0, false, null, null, true);
         } else {
           onImageTransitionEnd();
         }
       } else {
         hideImmediately();
       }
-
       return this;
     },
-
     /**
      * View one of the images with image's index
      * @param {number} index - The index of the image to view.
@@ -67173,27 +67091,22 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     view: function view() {
       var _this2 = this;
-
       var index = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : this.options.initialViewIndex;
       index = Number(index) || 0;
-
       if (this.hiding || this.played || index < 0 || index >= this.length || this.viewed && index === this.index) {
         return this;
       }
-
       if (!this.isShown) {
         this.index = index;
         return this.show();
       }
-
       if (this.viewing) {
         this.viewing.abort();
       }
-
       var element = this.element,
-          options = this.options,
-          title = this.title,
-          canvas = this.canvas;
+        options = this.options,
+        title = this.title,
+        canvas = this.canvas;
       var item = this.items[index];
       var img = item.querySelector('img');
       var url = getData(img, 'originalUrl');
@@ -67201,20 +67114,17 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       var image = document.createElement('img');
       forEach(options.inheritedAttributes, function (name) {
         var value = img.getAttribute(name);
-
         if (value !== null) {
           image.setAttribute(name, value);
         }
       });
       image.src = url;
       image.alt = alt;
-
       if (isFunction(options.view)) {
         addListener(element, EVENT_VIEW, options.view, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_VIEW, {
         originalImage: this.images[index],
         index: index,
@@ -67222,52 +67132,47 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       }) === false || !this.isShown || this.hiding || this.played) {
         return this;
       }
-
       var activeItem = this.items[this.index];
-
       if (activeItem) {
         removeClass(activeItem, CLASS_ACTIVE);
         activeItem.removeAttribute('aria-selected');
       }
-
       addClass(item, CLASS_ACTIVE);
       item.setAttribute('aria-selected', true);
-
       if (options.focus) {
         item.focus();
       }
-
       this.image = image;
       this.viewed = false;
       this.index = index;
       this.imageData = {};
       addClass(image, CLASS_INVISIBLE);
-
       if (options.loading) {
         addClass(canvas, CLASS_LOADING);
       }
-
       canvas.innerHTML = '';
-      canvas.appendChild(image); // Center current item
+      canvas.appendChild(image);
 
-      this.renderList(); // Clear title
+      // Center current item
+      this.renderList();
 
-      title.innerHTML = ''; // Generate title after viewed
+      // Clear title
+      title.innerHTML = '';
 
+      // Generate title after viewed
       var onViewed = function onViewed() {
         var imageData = _this2.imageData;
         var render = Array.isArray(options.title) ? options.title[1] : options.title;
         title.innerHTML = escapeHTMLEntities(isFunction(render) ? render.call(_this2, image, imageData) : "".concat(alt, " (").concat(imageData.naturalWidth, " \xD7 ").concat(imageData.naturalHeight, ")"));
       };
-
       var onLoad;
+      var onError;
       addListener(element, EVENT_VIEWED, onViewed, {
         once: true
       });
       this.viewing = {
         abort: function abort() {
           removeListener(element, EVENT_VIEWED, onViewed);
-
           if (image.complete) {
             if (_this2.imageRendering) {
               _this2.imageRendering.abort();
@@ -67278,35 +67183,46 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             // Cancel download to save bandwidth.
             image.src = '';
             removeListener(image, EVENT_LOAD, onLoad);
-
             if (_this2.timeout) {
               clearTimeout(_this2.timeout);
             }
           }
         }
       };
-
       if (image.complete) {
         this.load();
       } else {
-        addListener(image, EVENT_LOAD, onLoad = this.load.bind(this), {
+        addListener(image, EVENT_LOAD, onLoad = function onLoad() {
+          removeListener(image, EVENT_ERROR, onError);
+          _this2.load();
+        }, {
           once: true
         });
-
+        addListener(image, EVENT_ERROR, onError = function onError() {
+          removeListener(image, EVENT_LOAD, onLoad);
+          if (_this2.timeout) {
+            clearTimeout(_this2.timeout);
+            _this2.timeout = false;
+          }
+          removeClass(image, CLASS_INVISIBLE);
+          if (options.loading) {
+            removeClass(_this2.canvas, CLASS_LOADING);
+          }
+        }, {
+          once: true
+        });
         if (this.timeout) {
           clearTimeout(this.timeout);
-        } // Make the image visible if it fails to load within 1s
+        }
 
-
+        // Make the image visible if it fails to load within 1s
         this.timeout = setTimeout(function () {
           removeClass(image, CLASS_INVISIBLE);
           _this2.timeout = false;
         }, 1000);
       }
-
       return this;
     },
-
     /**
      * View the previous image
      * @param {boolean} [loop=false] - Indicate if view the last one
@@ -67316,15 +67232,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     prev: function prev() {
       var loop = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
       var index = this.index - 1;
-
       if (index < 0) {
         index = loop ? this.length - 1 : 0;
       }
-
       this.view(index);
       return this;
     },
-
     /**
      * View the next image
      * @param {boolean} [loop=false] - Indicate if view the first one
@@ -67335,15 +67248,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       var loop = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
       var maxIndex = this.length - 1;
       var index = this.index + 1;
-
       if (index > maxIndex) {
         index = loop ? 0 : maxIndex;
       }
-
       this.view(index);
       return this;
     },
-
     /**
      * Move the image with relative offsets.
      * @param {number} x - The moving distance in the horizontal direction.
@@ -67356,7 +67266,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.moveTo(isUndefined(x) ? x : imageData.x + Number(x), isUndefined(y) ? y : imageData.y + Number(y));
       return this;
     },
-
     /**
      * Move the image to an absolute point.
      * @param {number} x - The new position in the horizontal direction.
@@ -67366,41 +67275,33 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     moveTo: function moveTo(x) {
       var _this3 = this;
-
       var y = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : x;
-
       var _originalEvent = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-
       var element = this.element,
-          options = this.options,
-          imageData = this.imageData;
+        options = this.options,
+        imageData = this.imageData;
       x = Number(x);
       y = Number(y);
-
       if (this.viewed && !this.played && options.movable) {
         var oldX = imageData.x;
         var oldY = imageData.y;
         var changed = false;
-
         if (isNumber(x)) {
           changed = true;
         } else {
           x = oldX;
         }
-
         if (isNumber(y)) {
           changed = true;
         } else {
           y = oldY;
         }
-
         if (changed) {
           if (isFunction(options.move)) {
             addListener(element, EVENT_MOVE, options.move, {
               once: true
             });
           }
-
           if (dispatchEvent(element, EVENT_MOVE, {
             x: x,
             y: y,
@@ -67410,7 +67311,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           }) === false) {
             return this;
           }
-
           imageData.x = x;
           imageData.y = y;
           imageData.left = x;
@@ -67418,13 +67318,11 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           this.moving = true;
           this.renderImage(function () {
             _this3.moving = false;
-
             if (isFunction(options.moved)) {
               addListener(element, EVENT_MOVED, options.moved, {
                 once: true
               });
             }
-
             dispatchEvent(element, EVENT_MOVED, {
               x: x,
               y: y,
@@ -67437,10 +67335,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           });
         }
       }
-
       return this;
     },
-
     /**
      * Rotate the image with a relative degree.
      * @param {number} degree - The rotate degree.
@@ -67450,7 +67346,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.rotateTo((this.imageData.rotate || 0) + Number(degree));
       return this;
     },
-
     /**
      * Rotate the image to an absolute degree.
      * @param {number} degree - The rotate degree.
@@ -67458,39 +67353,32 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     rotateTo: function rotateTo(degree) {
       var _this4 = this;
-
       var element = this.element,
-          options = this.options,
-          imageData = this.imageData;
+        options = this.options,
+        imageData = this.imageData;
       degree = Number(degree);
-
       if (isNumber(degree) && this.viewed && !this.played && options.rotatable) {
         var oldDegree = imageData.rotate;
-
         if (isFunction(options.rotate)) {
           addListener(element, EVENT_ROTATE, options.rotate, {
             once: true
           });
         }
-
         if (dispatchEvent(element, EVENT_ROTATE, {
           degree: degree,
           oldDegree: oldDegree
         }) === false) {
           return this;
         }
-
         imageData.rotate = degree;
         this.rotating = true;
         this.renderImage(function () {
           _this4.rotating = false;
-
           if (isFunction(options.rotated)) {
             addListener(element, EVENT_ROTATED, options.rotated, {
               once: true
             });
           }
-
           dispatchEvent(element, EVENT_ROTATED, {
             degree: degree,
             oldDegree: oldDegree
@@ -67499,10 +67387,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           });
         });
       }
-
       return this;
     },
-
     /**
      * Scale the image on the x-axis.
      * @param {number} scaleX - The scale ratio on the x-axis.
@@ -67512,7 +67398,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.scale(_scaleX, this.imageData.scaleY);
       return this;
     },
-
     /**
      * Scale the image on the y-axis.
      * @param {number} scaleY - The scale ratio on the y-axis.
@@ -67522,7 +67407,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.scale(this.imageData.scaleX, _scaleY);
       return this;
     },
-
     /**
      * Scale the image.
      * @param {number} scaleX - The scale ratio on the x-axis.
@@ -67531,38 +67415,32 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     scale: function scale(scaleX) {
       var _this5 = this;
-
       var scaleY = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : scaleX;
       var element = this.element,
-          options = this.options,
-          imageData = this.imageData;
+        options = this.options,
+        imageData = this.imageData;
       scaleX = Number(scaleX);
       scaleY = Number(scaleY);
-
       if (this.viewed && !this.played && options.scalable) {
         var oldScaleX = imageData.scaleX;
         var oldScaleY = imageData.scaleY;
         var changed = false;
-
         if (isNumber(scaleX)) {
           changed = true;
         } else {
           scaleX = oldScaleX;
         }
-
         if (isNumber(scaleY)) {
           changed = true;
         } else {
           scaleY = oldScaleY;
         }
-
         if (changed) {
           if (isFunction(options.scale)) {
             addListener(element, EVENT_SCALE, options.scale, {
               once: true
             });
           }
-
           if (dispatchEvent(element, EVENT_SCALE, {
             scaleX: scaleX,
             scaleY: scaleY,
@@ -67571,19 +67449,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           }) === false) {
             return this;
           }
-
           imageData.scaleX = scaleX;
           imageData.scaleY = scaleY;
           this.scaling = true;
           this.renderImage(function () {
             _this5.scaling = false;
-
             if (isFunction(options.scaled)) {
               addListener(element, EVENT_SCALED, options.scaled, {
                 once: true
               });
             }
-
             dispatchEvent(element, EVENT_SCALED, {
               scaleX: scaleX,
               scaleY: scaleY,
@@ -67595,87 +67470,88 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           });
         }
       }
-
       return this;
     },
-
     /**
      * Zoom the image with a relative ratio.
      * @param {number} ratio - The target ratio.
-     * @param {boolean} [hasTooltip=false] - Indicates if it has a tooltip or not.
+     * @param {boolean} [showTooltip=false] - Indicates whether to show the tooltip.
+     * @param {Object} [pivot] - The pivot point coordinate for zooming.
      * @param {Event} [_originalEvent=null] - The original event if any.
      * @returns {Viewer} this
      */
     zoom: function zoom(ratio) {
-      var hasTooltip = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : false;
-
-      var _originalEvent = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-
+      var showTooltip = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : false;
+      var pivot = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+      var _originalEvent = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : null;
       var imageData = this.imageData;
       ratio = Number(ratio);
-
       if (ratio < 0) {
         ratio = 1 / (1 - ratio);
       } else {
         ratio = 1 + ratio;
       }
-
-      this.zoomTo(imageData.width * ratio / imageData.naturalWidth, hasTooltip, _originalEvent);
+      this.zoomTo(imageData.width * ratio / imageData.naturalWidth, showTooltip, pivot, _originalEvent);
       return this;
     },
-
     /**
      * Zoom the image to an absolute ratio.
      * @param {number} ratio - The target ratio.
-     * @param {boolean} [hasTooltip=false] - Indicates if it has a tooltip or not.
+     * @param {boolean} [showTooltip] - Indicates whether to show the tooltip.
+     * @param {Object} [pivot] - The pivot point coordinate for zooming.
      * @param {Event} [_originalEvent=null] - The original event if any.
      * @param {Event} [_zoomable=false] - Indicates if the current zoom is available or not.
      * @returns {Viewer} this
      */
     zoomTo: function zoomTo(ratio) {
       var _this6 = this;
-
-      var hasTooltip = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : false;
-
-      var _originalEvent = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
-
-      var _zoomable = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : false;
-
+      var showTooltip = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : false;
+      var pivot = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+      var _originalEvent = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : null;
+      var _zoomable = arguments.length > 4 && arguments[4] !== undefined ? arguments[4] : false;
       var element = this.element,
-          options = this.options,
-          pointers = this.pointers,
-          imageData = this.imageData;
+        options = this.options,
+        pointers = this.pointers,
+        imageData = this.imageData;
       var x = imageData.x,
-          y = imageData.y,
-          width = imageData.width,
-          height = imageData.height,
-          naturalWidth = imageData.naturalWidth,
-          naturalHeight = imageData.naturalHeight;
+        y = imageData.y,
+        width = imageData.width,
+        height = imageData.height,
+        naturalWidth = imageData.naturalWidth,
+        naturalHeight = imageData.naturalHeight;
       ratio = Math.max(0, ratio);
-
       if (isNumber(ratio) && this.viewed && !this.played && (_zoomable || options.zoomable)) {
         if (!_zoomable) {
           var minZoomRatio = Math.max(0.01, options.minZoomRatio);
           var maxZoomRatio = Math.min(100, options.maxZoomRatio);
           ratio = Math.min(Math.max(ratio, minZoomRatio), maxZoomRatio);
         }
-
-        if (_originalEvent && options.zoomRatio >= 0.055 && ratio > 0.95 && ratio < 1.05) {
-          ratio = 1;
+        if (_originalEvent) {
+          switch (_originalEvent.type) {
+            case 'wheel':
+              if (options.zoomRatio >= 0.055 && ratio > 0.95 && ratio < 1.05) {
+                ratio = 1;
+              }
+              break;
+            case 'pointermove':
+            case 'touchmove':
+            case 'mousemove':
+              if (ratio > 0.99 && ratio < 1.01) {
+                ratio = 1;
+              }
+              break;
+          }
         }
-
         var newWidth = naturalWidth * ratio;
         var newHeight = naturalHeight * ratio;
         var offsetWidth = newWidth - width;
         var offsetHeight = newHeight - height;
         var oldRatio = imageData.ratio;
-
         if (isFunction(options.zoom)) {
           addListener(element, EVENT_ZOOM, options.zoom, {
             once: true
           });
         }
-
         if (dispatchEvent(element, EVENT_ZOOM, {
           ratio: ratio,
           oldRatio: oldRatio,
@@ -67683,24 +67559,25 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         }) === false) {
           return this;
         }
-
         this.zooming = true;
-
         if (_originalEvent) {
           var offset = getOffset(this.viewer);
-          var center = pointers && Object.keys(pointers).length ? getPointersCenter(pointers) : {
+          var center = pointers && Object.keys(pointers).length > 0 ? getPointersCenter(pointers) : {
             pageX: _originalEvent.pageX,
             pageY: _originalEvent.pageY
-          }; // Zoom from the triggering point of the event
+          };
 
+          // Zoom from the triggering point of the event
           imageData.x -= offsetWidth * ((center.pageX - offset.left - x) / width);
           imageData.y -= offsetHeight * ((center.pageY - offset.top - y) / height);
+        } else if (isPlainObject(pivot) && isNumber(pivot.x) && isNumber(pivot.y)) {
+          imageData.x -= offsetWidth * ((pivot.x - x) / width);
+          imageData.y -= offsetHeight * ((pivot.y - y) / height);
         } else {
           // Zoom from the center of the image
           imageData.x -= offsetWidth / 2;
           imageData.y -= offsetHeight / 2;
         }
-
         imageData.left = imageData.x;
         imageData.top = imageData.y;
         imageData.width = newWidth;
@@ -67709,13 +67586,11 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         imageData.ratio = ratio;
         this.renderImage(function () {
           _this6.zooming = false;
-
           if (isFunction(options.zoomed)) {
             addListener(element, EVENT_ZOOMED, options.zoomed, {
               once: true
             });
           }
-
           dispatchEvent(element, EVENT_ZOOMED, {
             ratio: ratio,
             oldRatio: oldRatio,
@@ -67724,15 +67599,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             cancelable: false
           });
         });
-
-        if (hasTooltip) {
+        if (showTooltip) {
           this.tooltip();
         }
       }
-
       return this;
     },
-
     /**
      * Play the images
      * @param {boolean|FullscreenOptions} [fullscreen=false] - Indicate if request fullscreen or not.
@@ -67740,26 +67612,20 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     play: function play() {
       var _this7 = this;
-
       var fullscreen = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : false;
-
       if (!this.isShown || this.played) {
         return this;
       }
-
       var element = this.element,
-          options = this.options;
-
+        options = this.options;
       if (isFunction(options.play)) {
         addListener(element, EVENT_PLAY, options.play, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_PLAY) === false) {
         return this;
       }
-
       var player = this.player;
       var onLoad = this.loadImage.bind(this);
       var list = [];
@@ -67767,11 +67633,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       var index = 0;
       this.played = true;
       this.onLoadWhenPlay = onLoad;
-
       if (fullscreen) {
         this.requestFullscreen(fullscreen);
       }
-
       addClass(player, CLASS_SHOW);
       forEach(this.items, function (item, i) {
         var img = item.querySelector('img');
@@ -67782,61 +67646,63 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         total += 1;
         addClass(image, CLASS_FADE);
         toggleClass(image, CLASS_TRANSITION, options.transition);
-
         if (hasClass(item, CLASS_ACTIVE)) {
           addClass(image, CLASS_IN);
           index = i;
         }
-
         list.push(image);
         addListener(image, EVENT_LOAD, onLoad, {
           once: true
         });
         player.appendChild(image);
       });
-
       if (isNumber(options.interval) && options.interval > 0) {
-        var play = function play() {
-          _this7.playing = setTimeout(function () {
-            removeClass(list[index], CLASS_IN);
-            index += 1;
-            index = index < total ? index : 0;
-            addClass(list[index], CLASS_IN);
-            play();
-          }, options.interval);
+        var prev = function prev() {
+          clearTimeout(_this7.playing.timeout);
+          removeClass(list[index], CLASS_IN);
+          index -= 1;
+          index = index >= 0 ? index : total - 1;
+          addClass(list[index], CLASS_IN);
+          _this7.playing.timeout = setTimeout(prev, options.interval);
         };
-
+        var next = function next() {
+          clearTimeout(_this7.playing.timeout);
+          removeClass(list[index], CLASS_IN);
+          index += 1;
+          index = index < total ? index : 0;
+          addClass(list[index], CLASS_IN);
+          _this7.playing.timeout = setTimeout(next, options.interval);
+        };
         if (total > 1) {
-          play();
+          this.playing = {
+            prev: prev,
+            next: next,
+            timeout: setTimeout(next, options.interval)
+          };
         }
       }
-
       return this;
     },
     // Stop play
     stop: function stop() {
       var _this8 = this;
-
       if (!this.played) {
         return this;
       }
-
       var element = this.element,
-          options = this.options;
-
+        options = this.options;
       if (isFunction(options.stop)) {
         addListener(element, EVENT_STOP, options.stop, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_STOP) === false) {
         return this;
       }
-
       var player = this.player;
+      clearTimeout(this.playing.timeout);
+      this.playing = false;
       this.played = false;
-      clearTimeout(this.playing);
       forEach(player.getElementsByTagName('img'), function (image) {
         removeListener(image, EVENT_LOAD, _this8.onLoadWhenPlay);
       });
@@ -67848,28 +67714,22 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     // Enter modal mode (only available in inline mode)
     full: function full() {
       var _this9 = this;
-
       var options = this.options,
-          viewer = this.viewer,
-          image = this.image,
-          list = this.list;
-
+        viewer = this.viewer,
+        image = this.image,
+        list = this.list;
       if (!this.isShown || this.played || this.fulled || !options.inline) {
         return this;
       }
-
       this.fulled = true;
       this.open();
       addClass(this.button, CLASS_FULLSCREEN_EXIT);
-
       if (options.transition) {
         removeClass(list, CLASS_TRANSITION);
-
         if (this.viewed) {
           removeClass(image, CLASS_TRANSITION);
         }
       }
-
       addClass(viewer, CLASS_FIXED);
       viewer.setAttribute('role', 'dialog');
       viewer.setAttribute('aria-labelledby', this.title.id);
@@ -67878,15 +67738,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       setStyle(viewer, {
         zIndex: options.zIndex
       });
-
       if (options.focus) {
         this.enforceFocus();
       }
-
       this.initContainer();
       this.viewerData = assign({}, this.containerData);
       this.renderList();
-
       if (this.viewed) {
         this.initImage(function () {
           _this9.renderImage(function () {
@@ -67899,38 +67756,30 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           });
         });
       }
-
       return this;
     },
     // Exit modal mode (only available in inline mode)
     exit: function exit() {
       var _this10 = this;
-
       var options = this.options,
-          viewer = this.viewer,
-          image = this.image,
-          list = this.list;
-
+        viewer = this.viewer,
+        image = this.image,
+        list = this.list;
       if (!this.isShown || this.played || !this.fulled || !options.inline) {
         return this;
       }
-
       this.fulled = false;
       this.close();
       removeClass(this.button, CLASS_FULLSCREEN_EXIT);
-
       if (options.transition) {
         removeClass(list, CLASS_TRANSITION);
-
         if (this.viewed) {
           removeClass(image, CLASS_TRANSITION);
         }
       }
-
       if (options.focus) {
         this.clearEnforceFocus();
       }
-
       viewer.removeAttribute('role');
       viewer.removeAttribute('aria-labelledby');
       viewer.removeAttribute('aria-modal');
@@ -67941,7 +67790,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.viewerData = assign({}, this.parentData);
       this.renderViewer();
       this.renderList();
-
       if (this.viewed) {
         this.initImage(function () {
           _this10.renderImage(function () {
@@ -67954,34 +67802,29 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           });
         });
       }
-
       return this;
     },
     // Show the current ratio of the image with percentage
     tooltip: function tooltip() {
       var _this11 = this;
-
       var options = this.options,
-          tooltipBox = this.tooltipBox,
-          imageData = this.imageData;
-
+        tooltipBox = this.tooltipBox,
+        imageData = this.imageData;
       if (!this.viewed || this.played || !options.tooltip) {
         return this;
       }
-
       tooltipBox.textContent = "".concat(Math.round(imageData.ratio * 100), "%");
-
       if (!this.tooltipping) {
         if (options.transition) {
           if (this.fading) {
             dispatchEvent(tooltipBox, EVENT_TRANSITION_END);
           }
-
           addClass(tooltipBox, CLASS_SHOW);
           addClass(tooltipBox, CLASS_FADE);
           addClass(tooltipBox, CLASS_TRANSITION);
-          tooltipBox.removeAttribute('aria-hidden'); // Force reflow to enable CSS3 transition
+          tooltipBox.removeAttribute('aria-hidden');
 
+          // Force reflow to enable CSS3 transition
           tooltipBox.initialOffsetWidth = tooltipBox.offsetWidth;
           addClass(tooltipBox, CLASS_IN);
         } else {
@@ -67991,7 +67834,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else {
         clearTimeout(this.tooltipping);
       }
-
       this.tooltipping = setTimeout(function () {
         if (options.transition) {
           addListener(tooltipBox, EVENT_TRANSITION_END, function () {
@@ -68009,12 +67851,10 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           removeClass(tooltipBox, CLASS_SHOW);
           tooltipBox.setAttribute('aria-hidden', true);
         }
-
         _this11.tooltipping = false;
       }, 1000);
       return this;
     },
-
     /**
      * Toggle the image size between its current size and natural size
      * @param {Event} [_originalEvent=null] - The original event if any.
@@ -68022,13 +67862,11 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     toggle: function toggle() {
       var _originalEvent = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : null;
-
       if (this.imageData.ratio === 1) {
-        this.zoomTo(this.imageData.oldRatio, true, _originalEvent);
+        this.zoomTo(this.imageData.oldRatio, true, null, _originalEvent);
       } else {
-        this.zoomTo(1, true, _originalEvent);
+        this.zoomTo(1, true, null, _originalEvent);
       }
-
       return this;
     },
     // Reset the image to its initial state
@@ -68037,21 +67875,19 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         this.imageData = assign({}, this.initialImageData);
         this.renderImage();
       }
-
       return this;
     },
     // Update viewer when images changed
     update: function update() {
       var _this12 = this;
-
       var element = this.element,
-          options = this.options,
-          isImg = this.isImg; // Destroy viewer if the target image was deleted
+        options = this.options,
+        isImg = this.isImg;
 
+      // Destroy viewer if the target image was deleted
       if (isImg && !element.parentNode) {
         return this.destroy();
       }
-
       var images = [];
       forEach(isImg ? [element] : element.querySelectorAll('img'), function (image) {
         if (isFunction(options.filter)) {
@@ -68062,22 +67898,20 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           images.push(image);
         }
       });
-
       if (!images.length) {
         return this;
       }
-
       this.images = images;
       this.length = images.length;
-
       if (this.ready) {
         var changedIndexes = [];
         forEach(this.items, function (item, i) {
           var img = item.querySelector('img');
           var image = images[i];
-
           if (image && img) {
-            if (image.src !== img.src // Title changed (#408)
+            if (image.src !== img.src
+
+            // Title changed (#408)
             || image.alt !== img.alt) {
               changedIndexes.push(i);
             }
@@ -68089,18 +67923,17 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           width: 'auto'
         });
         this.initList();
-
         if (this.isShown) {
           if (this.length) {
             if (this.viewed) {
               var changedIndex = changedIndexes.indexOf(this.index);
-
               if (changedIndex >= 0) {
                 this.viewed = false;
                 this.view(Math.max(Math.min(this.index - changedIndex, this.length - 1), 0));
               } else {
-                var activeItem = this.items[this.index]; // Reactivate the current viewing item after reset the list.
+                var activeItem = this.items[this.index];
 
+                // Reactivate the current viewing item after reset the list.
                 addClass(activeItem, CLASS_ACTIVE);
                 activeItem.setAttribute('aria-selected', true);
               }
@@ -68117,30 +67950,24 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else {
         this.build();
       }
-
       return this;
     },
     // Destroy the viewer
     destroy: function destroy() {
       var element = this.element,
-          options = this.options;
-
+        options = this.options;
       if (!element[NAMESPACE]) {
         return this;
       }
-
       this.destroyed = true;
-
       if (this.ready) {
         if (this.played) {
           this.stop();
         }
-
         if (options.inline) {
           if (this.fulled) {
             this.exit();
           }
-
           this.unbind();
         } else if (this.isShown) {
           if (this.viewing) {
@@ -68150,17 +67977,14 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
               this.imageInitializing.abort();
             }
           }
-
           if (this.hiding) {
             this.transitioning.abort();
           }
-
           this.hidden();
         } else if (this.showing) {
           this.transitioning.abort();
           this.hidden();
         }
-
         this.ready = false;
         this.viewer.parentNode.removeChild(this.viewer);
       } else if (options.inline) {
@@ -68170,11 +67994,9 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
           this.initializing.abort();
         }
       }
-
       if (!options.inline) {
         removeListener(element, EVENT_CLICK, this.onStart);
       }
-
       element[NAMESPACE] = undefined;
       return this;
     }
@@ -68183,7 +68005,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
   var others = {
     getImageURL: function getImageURL(image) {
       var url = this.options.url;
-
       if (isString(url)) {
         url = image.getAttribute(url);
       } else if (isFunction(url)) {
@@ -68191,21 +68012,25 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       } else {
         url = '';
       }
-
       return url;
     },
     enforceFocus: function enforceFocus() {
       var _this = this;
-
       this.clearEnforceFocus();
       addListener(document, EVENT_FOCUSIN, this.onFocusin = function (event) {
         var viewer = _this.viewer;
         var target = event.target;
-
-        if (target !== document && target !== viewer && !viewer.contains(target) // Avoid conflicts with other modals (#474)
-        && (target.getAttribute('tabindex') === null || target.getAttribute('aria-modal') !== 'true')) {
-          viewer.focus();
+        if (target === document || target === viewer || viewer.contains(target)) {
+          return;
         }
+        while (target) {
+          // Avoid conflicts with other modals (#474, #540)
+          if (target.getAttribute('tabindex') !== null || target.getAttribute('aria-modal') === 'true') {
+            return;
+          }
+          target = target.parentElement;
+        }
+        viewer.focus();
       });
     },
     clearEnforceFocus: function clearEnforceFocus() {
@@ -68217,51 +68042,49 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     open: function open() {
       var body = this.body;
       addClass(body, CLASS_OPEN);
-      body.style.paddingRight = "".concat(this.scrollbarWidth + (parseFloat(this.initialBodyComputedPaddingRight) || 0), "px");
+      if (this.scrollbarWidth > 0) {
+        body.style.paddingRight = "".concat(this.scrollbarWidth + (parseFloat(this.initialBodyComputedPaddingRight) || 0), "px");
+      }
     },
     close: function close() {
       var body = this.body;
       removeClass(body, CLASS_OPEN);
-      body.style.paddingRight = this.initialBodyPaddingRight;
+      if (this.scrollbarWidth > 0) {
+        body.style.paddingRight = this.initialBodyPaddingRight;
+      }
     },
     shown: function shown() {
       var element = this.element,
-          options = this.options,
-          viewer = this.viewer;
+        options = this.options,
+        viewer = this.viewer;
       this.fulled = true;
       this.isShown = true;
       this.render();
       this.bind();
       this.showing = false;
-
       if (options.focus) {
         viewer.focus();
         this.enforceFocus();
       }
-
       if (isFunction(options.shown)) {
         addListener(element, EVENT_SHOWN, options.shown, {
           once: true
         });
       }
-
       if (dispatchEvent(element, EVENT_SHOWN) === false) {
         return;
       }
-
       if (this.ready && this.isShown && !this.hiding) {
         this.view(this.index);
       }
     },
     hidden: function hidden() {
       var element = this.element,
-          options = this.options,
-          viewer = this.viewer;
-
+        options = this.options,
+        viewer = this.viewer;
       if (options.fucus) {
         this.clearEnforceFocus();
       }
-
       this.fulled = false;
       this.viewed = false;
       this.isShown = false;
@@ -68275,14 +68098,12 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.resetList();
       this.resetImage();
       this.hiding = false;
-
       if (!this.destroyed) {
         if (isFunction(options.hidden)) {
           addListener(element, EVENT_HIDDEN, options.hidden, {
             once: true
           });
         }
-
         dispatchEvent(element, EVENT_HIDDEN, null, {
           cancelable: false
         });
@@ -68290,10 +68111,10 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     requestFullscreen: function requestFullscreen(options) {
       var document = this.element.ownerDocument;
-
       if (this.fulled && !(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement)) {
-        var documentElement = document.documentElement; // Element.requestFullscreen()
+        var documentElement = document.documentElement;
 
+        // Element.requestFullscreen()
         if (documentElement.requestFullscreen) {
           // Avoid TypeError when convert `options` to dictionary
           if (isPlainObject(options)) {
@@ -68312,7 +68133,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     exitFullscreen: function exitFullscreen() {
       var document = this.element.ownerDocument;
-
       if (this.fulled && (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement)) {
         // Document.exitFullscreen()
         if (document.exitFullscreen) {
@@ -68328,48 +68148,46 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     change: function change(event) {
       var options = this.options,
-          pointers = this.pointers;
-      var pointer = pointers[Object.keys(pointers)[0]]; // In the case of the `pointers` object is empty (#421)
+        pointers = this.pointers;
+      var pointer = pointers[Object.keys(pointers)[0]];
 
+      // In the case of the `pointers` object is empty (#421)
       if (!pointer) {
         return;
       }
-
       var offsetX = pointer.endX - pointer.startX;
       var offsetY = pointer.endY - pointer.startY;
-
       switch (this.action) {
         // Move the current image
         case ACTION_MOVE:
-          this.move(offsetX, offsetY, event);
+          if (offsetX !== 0 || offsetY !== 0) {
+            this.pointerMoved = true;
+            this.move(offsetX, offsetY, event);
+          }
           break;
+
         // Zoom the current image
-
         case ACTION_ZOOM:
-          this.zoom(getMaxZoomRatio(pointers), false, event);
+          this.zoom(getMaxZoomRatio(pointers), false, null, event);
           break;
-
         case ACTION_SWITCH:
           {
             this.action = 'switched';
             var absoluteOffsetX = Math.abs(offsetX);
-
             if (absoluteOffsetX > 1 && absoluteOffsetX > Math.abs(offsetY)) {
               // Empty `pointers` as `touchend` event will not be fired after swiped in iOS browsers.
               this.pointers = {};
-
               if (offsetX > 1) {
                 this.prev(options.loop);
               } else if (offsetX < -1) {
                 this.next(options.loop);
               }
             }
-
             break;
           }
-      } // Override
+      }
 
-
+      // Override
       forEach(pointers, function (p) {
         p.startX = p.endX;
         p.startY = p.endY;
@@ -68377,20 +68195,18 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
     },
     isSwitchable: function isSwitchable() {
       var imageData = this.imageData,
-          viewerData = this.viewerData;
+        viewerData = this.viewerData;
       return this.length > 1 && imageData.x >= 0 && imageData.y >= 0 && imageData.width <= viewerData.width && imageData.height <= viewerData.height;
     }
   };
 
   var AnotherViewer = WINDOW.Viewer;
-
   var getUniqueID = function (id) {
     return function () {
       id += 1;
       return id;
     };
   }(-1);
-
   var Viewer = /*#__PURE__*/function () {
     /**
      * Create a new Viewer.
@@ -68399,13 +68215,10 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
      */
     function Viewer(element) {
       var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-
       _classCallCheck(this, Viewer);
-
       if (!element || element.nodeType !== 1) {
         throw new Error('The first argument is required and must be an element.');
       }
-
       this.element = element;
       this.options = assign({}, DEFAULTS, isPlainObject(options) && options);
       this.action = false;
@@ -68432,28 +68245,25 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
       this.viewing = false;
       this.wheeling = false;
       this.zooming = false;
+      this.pointerMoved = false;
       this.id = getUniqueID();
       this.init();
     }
-
     _createClass(Viewer, [{
       key: "init",
       value: function init() {
         var _this = this;
-
         var element = this.element,
-            options = this.options;
-
+          options = this.options;
         if (element[NAMESPACE]) {
           return;
         }
+        element[NAMESPACE] = this;
 
-        element[NAMESPACE] = this; // The `focus` option requires the `keyboard` option set to `true`.
-
+        // The `focus` option requires the `keyboard` option set to `true`.
         if (options.focus && !options.keyboard) {
           options.focus = false;
         }
-
         var isImg = element.localName === 'img';
         var images = [];
         forEach(isImg ? [element] : element.querySelectorAll('img'), function (image) {
@@ -68468,18 +68278,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         this.isImg = isImg;
         this.length = images.length;
         this.images = images;
-        this.initBody(); // Override `transition` option if it is not supported
+        this.initBody();
 
+        // Override `transition` option if it is not supported
         if (isUndefined(document.createElement(NAMESPACE).style.transition)) {
           options.transition = false;
         }
-
         if (options.inline) {
           var count = 0;
-
           var progress = function progress() {
             count += 1;
-
             if (count === _this.length) {
               var timeout;
               _this.initializing = false;
@@ -68487,21 +68295,21 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
                 abort: function abort() {
                   clearTimeout(timeout);
                 }
-              }; // build asynchronously to keep `this.viewer` is accessible in `ready` event handler.
+              };
 
+              // build asynchronously to keep `this.viewer` is accessible in `ready` event handler.
               timeout = setTimeout(function () {
                 _this.delaying = false;
-
                 _this.build();
               }, 0);
             }
           };
-
           this.initializing = {
             abort: function abort() {
               forEach(images, function (image) {
                 if (!image.complete) {
                   removeListener(image, EVENT_LOAD, progress);
+                  removeListener(image, EVENT_ERROR, progress);
                 }
               });
             }
@@ -68510,7 +68318,18 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             if (image.complete) {
               progress();
             } else {
-              addListener(image, EVENT_LOAD, progress, {
+              var onLoad;
+              var onError;
+              addListener(image, EVENT_LOAD, onLoad = function onLoad() {
+                removeListener(image, EVENT_ERROR, onError);
+                progress();
+              }, {
+                once: true
+              });
+              addListener(image, EVENT_ERROR, onError = function onError() {
+                removeListener(image, EVENT_LOAD, onLoad);
+                progress();
+              }, {
                 once: true
               });
             }
@@ -68518,7 +68337,6 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         } else {
           addListener(element, EVENT_CLICK, this.onStart = function (_ref) {
             var target = _ref.target;
-
             if (target.localName === 'img' && (!isFunction(options.filter) || options.filter.call(_this, target))) {
               _this.view(_this.images.indexOf(target));
             }
@@ -68531,9 +68349,8 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         if (this.ready) {
           return;
         }
-
         var element = this.element,
-            options = this.options;
+          options = this.options;
         var parent = element.parentNode;
         var template = document.createElement('div');
         template.innerHTML = TEMPLATE;
@@ -68559,82 +68376,65 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
         addClass(title, !options.title ? CLASS_HIDE : getResponsiveClass(Array.isArray(options.title) ? options.title[0] : options.title));
         addClass(navbar, !options.navbar ? CLASS_HIDE : getResponsiveClass(options.navbar));
         toggleClass(button, CLASS_HIDE, !options.button);
-
         if (options.keyboard) {
           button.setAttribute('tabindex', 0);
         }
-
         if (options.backdrop) {
           addClass(viewer, "".concat(NAMESPACE, "-backdrop"));
-
           if (!options.inline && options.backdrop !== 'static') {
             setData(canvas, DATA_ACTION, 'hide');
           }
         }
-
         if (isString(options.className) && options.className) {
           // In case there are multiple class names
           options.className.split(REGEXP_SPACES).forEach(function (className) {
             addClass(viewer, className);
           });
         }
-
         if (options.toolbar) {
           var list = document.createElement('ul');
           var custom = isPlainObject(options.toolbar);
           var zoomButtons = BUTTONS.slice(0, 3);
           var rotateButtons = BUTTONS.slice(7, 9);
           var scaleButtons = BUTTONS.slice(9);
-
           if (!custom) {
             addClass(toolbar, getResponsiveClass(options.toolbar));
           }
-
           forEach(custom ? options.toolbar : BUTTONS, function (value, index) {
             var deep = custom && isPlainObject(value);
             var name = custom ? hyphenate(index) : value;
             var show = deep && !isUndefined(value.show) ? value.show : value;
-
             if (!show || !options.zoomable && zoomButtons.indexOf(name) !== -1 || !options.rotatable && rotateButtons.indexOf(name) !== -1 || !options.scalable && scaleButtons.indexOf(name) !== -1) {
               return;
             }
-
             var size = deep && !isUndefined(value.size) ? value.size : value;
             var click = deep && !isUndefined(value.click) ? value.click : value;
             var item = document.createElement('li');
-
             if (options.keyboard) {
               item.setAttribute('tabindex', 0);
             }
-
             item.setAttribute('role', 'button');
             addClass(item, "".concat(NAMESPACE, "-").concat(name));
-
             if (!isFunction(click)) {
               setData(item, DATA_ACTION, name);
             }
-
             if (isNumber(show)) {
               addClass(item, getResponsiveClass(show));
             }
-
             if (['small', 'large'].indexOf(size) !== -1) {
               addClass(item, "".concat(NAMESPACE, "-").concat(size));
             } else if (name === 'play') {
               addClass(item, "".concat(NAMESPACE, "-large"));
             }
-
             if (isFunction(click)) {
               addListener(item, EVENT_CLICK, click);
             }
-
             list.appendChild(item);
           });
           toolbar.appendChild(list);
         } else {
           addClass(toolbar, CLASS_HIDE);
         }
-
         if (!options.rotatable) {
           var rotates = toolbar.querySelectorAll('li[class*="rotate"]');
           addClass(rotates, CLASS_INVISIBLE);
@@ -68642,19 +68442,16 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             toolbar.appendChild(rotate);
           });
         }
-
         if (options.inline) {
           addClass(button, CLASS_FULLSCREEN);
           setStyle(viewer, {
             zIndex: options.zIndexInline
           });
-
           if (window.getComputedStyle(parent).position === 'static') {
             setStyle(parent, {
               position: 'relative'
             });
           }
-
           parent.insertBefore(viewer, element.nextSibling);
         } else {
           addClass(button, CLASS_CLOSE);
@@ -68665,72 +68462,62 @@ Object.defineProperty(__webpack_exports__, "__esModule", { value: true });
             zIndex: options.zIndex
           });
           var container = options.container;
-
           if (isString(container)) {
             container = element.ownerDocument.querySelector(container);
           }
-
           if (!container) {
             container = this.body;
           }
-
           container.appendChild(viewer);
         }
-
         if (options.inline) {
           this.render();
           this.bind();
           this.isShown = true;
         }
-
         this.ready = true;
-
         if (isFunction(options.ready)) {
           addListener(element, EVENT_READY, options.ready, {
             once: true
           });
         }
-
         if (dispatchEvent(element, EVENT_READY) === false) {
           this.ready = false;
           return;
         }
-
         if (this.ready && options.inline) {
           this.view(this.index);
         }
       }
+
       /**
        * Get the no conflict viewer class.
        * @returns {Viewer} The viewer class.
        */
-
     }], [{
       key: "noConflict",
       value: function noConflict() {
         window.Viewer = AnotherViewer;
         return Viewer;
       }
+
       /**
        * Change the default options.
        * @param {Object} options - The new default options.
        */
-
     }, {
       key: "setDefaults",
       value: function setDefaults(options) {
         assign(DEFAULTS, isPlainObject(options) && options);
       }
     }]);
-
     return Viewer;
   }();
-
   assign(Viewer.prototype, render, events, handlers, methods, others);
 
   return Viewer;
 
-})));
+}));
 
 
 /***/ }),
@@ -68797,7 +68584,7 @@ exports = module.exports = __webpack_require__(1)(false);
 
 
 // module
-exports.push([module.i, "/*!\n * Viewer.js v1.10.1\n * https://fengyuanchen.github.io/viewerjs\n *\n * Copyright 2015-present Chen Fengyuan\n * Released under the MIT license\n *\n * Date: 2021-08-01T13:35:44.576Z\n */\n\n.viewer-zoom-in::before,\n.viewer-zoom-out::before,\n.viewer-one-to-one::before,\n.viewer-reset::before,\n.viewer-prev::before,\n.viewer-play::before,\n.viewer-next::before,\n.viewer-rotate-left::before,\n.viewer-rotate-right::before,\n.viewer-flip-horizontal::before,\n.viewer-flip-vertical::before,\n.viewer-fullscreen::before,\n.viewer-fullscreen-exit::before,\n.viewer-close::before {\n  background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAAUCAYAAABWOyJDAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAAQPSURBVHic7Zs/iFxVFMa/0U2UaJGksUgnIVhYxVhpjDbZCBmLdAYECxsRFBTUamcXUiSNncgKQbSxsxH8gzAP3FU2jY0kKKJNiiiIghFlccnP4p3nPCdv3p9778vsLOcHB2bfveeb7955c3jvvNkBIMdxnD64a94GHMfZu3iBcRynN7zAOI7TG15gHCeeNUkr8zaxG2lbYDYsdgMbktBsP03jdQwljSXdtBhLOmtjowC9Mg9L+knSlcD8TNKpSA9lBpK2JF2VdDSR5n5J64m0qli399hNFMUlpshQii5jbXTbHGviB0nLNeNDSd9VO4A2UdB2fp+x0eCnaXxWXGA2X0au/3HgN9P4LFCjIANOJdrLr0zzZ+BEpNYDwKbpnQMeAw4m8HjQtM6Z9qa917zPQwFr3M5KgA6J5rTJCdFZJj9/lyvGhsDvwFNVuV2MhhjrK6b9bFiE+j1r87eBl4HDwCF7/U/k+ofAX5b/EXBv5JoLMuILzf3Ap6Z3EzgdqHMCuF7hcQf4HDgeoHnccncqdK/TvSDWffFXI/exICY/xZyqc6XLWF1UFZna4gJ7q8BsRvgd2/xXpo6P+D9dfT7PpECtA3cnWPM0GXGFZh/wgWltA+cDNC7X+AP4GzjZQe+k5dRxuYPeiuXU7e1qwLpDz7dFjXKRaSwuMLvAlG8zZlG+YmiK1HoFqT7wP2z+4Q45TfEGcMt01xLoNZEBTwRqD4BLpnMLeC1A41UmVxsXgXeBayV/Wx20rpTyrpnWRft7p6O/FdqzGrDukPNtkaMoMo3FBdBSQMOnYBCReyf05s126fU9ytfX98+mY54Kxnp7S9K3kj6U9KYdG0h6UdLbkh7poFXMfUnSOyVvL0h6VtIXHbS6nOP+s/Zm9mvyXW1uuC9ohZ72E9uDmXWLJOB1GxsH+DxPftsB8B6wlGDN02TAkxG6+4D3TWsbeC5CS8CDFce+AW500LhhOW2020TRjK3b21HEmgti9m0RonxbdMZeVzV+/4tF3cBpP7E9mKHNL5q8h5g0eYsCMQz0epq8gQrwMXAgcs0FGXGFRcB9wCemF9PkbYqM/Bas7fxLwNeJPdTdpo4itQti8lPMqTpXuozVRVXPpbHI3KkNTB1NfkL81j2mvhDp91HgV9MKuRIqrykj3WPq4rHyL+axj8/qGPmTqi6F9YDlHOvJU6oYcTsh/TYSzWmTE6JT19CtLTJt32D6CmHe0eQn1O8z5AXgT4sx4Vcu0/EQecMydB8z0hUWkTd2t4CrwNEePqMBcAR4mrBbwyXLPWJa8zrXmmLEhNBmfpkuY2102xxrih+pb+ieAb6vGhuA97UcJ5KR8gZ77K+99xxeYBzH6Q3/Z0fHcXrDC4zjOL3hBcZxnN74F+zlvXFWXF9PAAAAAElFTkSuQmCC');\n  background-repeat: no-repeat;\n  background-size: 280px;\n  color: transparent;\n  display: block;\n  font-size: 0;\n  height: 20px;\n  line-height: 0;\n  width: 20px;\n}\n\n.viewer-zoom-in::before {\n  background-position: 0 0;\n  content: 'Zoom In';\n}\n\n.viewer-zoom-out::before {\n  background-position: -20px 0;\n  content: 'Zoom Out';\n}\n\n.viewer-one-to-one::before {\n  background-position: -40px 0;\n  content: 'One to One';\n}\n\n.viewer-reset::before {\n  background-position: -60px 0;\n  content: 'Reset';\n}\n\n.viewer-prev::before {\n  background-position: -80px 0;\n  content: 'Previous';\n}\n\n.viewer-play::before {\n  background-position: -100px 0;\n  content: 'Play';\n}\n\n.viewer-next::before {\n  background-position: -120px 0;\n  content: 'Next';\n}\n\n.viewer-rotate-left::before {\n  background-position: -140px 0;\n  content: 'Rotate Left';\n}\n\n.viewer-rotate-right::before {\n  background-position: -160px 0;\n  content: 'Rotate Right';\n}\n\n.viewer-flip-horizontal::before {\n  background-position: -180px 0;\n  content: 'Flip Horizontal';\n}\n\n.viewer-flip-vertical::before {\n  background-position: -200px 0;\n  content: 'Flip Vertical';\n}\n\n.viewer-fullscreen::before {\n  background-position: -220px 0;\n  content: 'Enter Full Screen';\n}\n\n.viewer-fullscreen-exit::before {\n  background-position: -240px 0;\n  content: 'Exit Full Screen';\n}\n\n.viewer-close::before {\n  background-position: -260px 0;\n  content: 'Close';\n}\n\n.viewer-container {\n  bottom: 0;\n  direction: ltr;\n  font-size: 0;\n  left: 0;\n  line-height: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  -webkit-tap-highlight-color: transparent;\n  top: 0;\n  -ms-touch-action: none;\n  touch-action: none;\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n  -moz-user-select: none;\n  -ms-user-select: none;\n  user-select: none;\n}\n\n.viewer-container::-moz-selection,\n.viewer-container *::-moz-selection {\n  background-color: transparent;\n}\n\n.viewer-container::selection,\n.viewer-container *::selection {\n  background-color: transparent;\n}\n\n.viewer-container:focus {\n  outline: 0;\n}\n\n.viewer-container img {\n  display: block;\n  height: auto;\n  max-height: none !important;\n  max-width: none !important;\n  min-height: 0 !important;\n  min-width: 0 !important;\n  width: 100%;\n}\n\n.viewer-canvas {\n  bottom: 0;\n  left: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  top: 0;\n}\n\n.viewer-canvas > img {\n  height: auto;\n  margin: 15px auto;\n  max-width: 90% !important;\n  width: auto;\n}\n\n.viewer-footer {\n  bottom: 0;\n  left: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  text-align: center;\n}\n\n.viewer-navbar {\n  background-color: rgba(0, 0, 0, 0.5);\n  overflow: hidden;\n}\n\n.viewer-list {\n  -webkit-box-sizing: content-box;\n  box-sizing: content-box;\n  height: 50px;\n  margin: 0;\n  overflow: hidden;\n  padding: 1px 0;\n}\n\n.viewer-list > li {\n  color: transparent;\n  cursor: pointer;\n  float: left;\n  font-size: 0;\n  height: 50px;\n  line-height: 0;\n  opacity: 0.5;\n  overflow: hidden;\n  -webkit-transition: opacity 0.15s;\n  transition: opacity 0.15s;\n  width: 30px;\n}\n\n.viewer-list > li:focus,\n.viewer-list > li:hover {\n  opacity: 0.75;\n}\n\n.viewer-list > li:focus {\n  outline: 0;\n}\n\n.viewer-list > li + li {\n  margin-left: 1px;\n}\n\n.viewer-list > .viewer-loading {\n  position: relative;\n}\n\n.viewer-list > .viewer-loading::after {\n  border-width: 2px;\n  height: 20px;\n  margin-left: -10px;\n  margin-top: -10px;\n  width: 20px;\n}\n\n.viewer-list > .viewer-active,\n.viewer-list > .viewer-active:focus,\n.viewer-list > .viewer-active:hover {\n  opacity: 1;\n}\n\n.viewer-player {\n  background-color: #000;\n  bottom: 0;\n  cursor: none;\n  display: none;\n  left: 0;\n  position: absolute;\n  right: 0;\n  top: 0;\n  z-index: 1;\n}\n\n.viewer-player > img {\n  left: 0;\n  position: absolute;\n  top: 0;\n}\n\n.viewer-toolbar > ul {\n  display: inline-block;\n  margin: 0 auto 5px;\n  overflow: hidden;\n  padding: 6px 3px;\n}\n\n.viewer-toolbar > ul > li {\n  background-color: rgba(0, 0, 0, 0.5);\n  border-radius: 50%;\n  cursor: pointer;\n  float: left;\n  height: 24px;\n  overflow: hidden;\n  -webkit-transition: background-color 0.15s;\n  transition: background-color 0.15s;\n  width: 24px;\n}\n\n.viewer-toolbar > ul > li:focus,\n.viewer-toolbar > ul > li:hover {\n  background-color: rgba(0, 0, 0, 0.8);\n}\n\n.viewer-toolbar > ul > li:focus {\n  -webkit-box-shadow: 0 0 3px #fff;\n  box-shadow: 0 0 3px #fff;\n  outline: 0;\n  position: relative;\n  z-index: 1;\n}\n\n.viewer-toolbar > ul > li::before {\n  margin: 2px;\n}\n\n.viewer-toolbar > ul > li + li {\n  margin-left: 1px;\n}\n\n.viewer-toolbar > ul > .viewer-small {\n  height: 18px;\n  margin-bottom: 3px;\n  margin-top: 3px;\n  width: 18px;\n}\n\n.viewer-toolbar > ul > .viewer-small::before {\n  margin: -1px;\n}\n\n.viewer-toolbar > ul > .viewer-large {\n  height: 30px;\n  margin-bottom: -3px;\n  margin-top: -3px;\n  width: 30px;\n}\n\n.viewer-toolbar > ul > .viewer-large::before {\n  margin: 5px;\n}\n\n.viewer-tooltip {\n  background-color: rgba(0, 0, 0, 0.8);\n  border-radius: 10px;\n  color: #fff;\n  display: none;\n  font-size: 12px;\n  height: 20px;\n  left: 50%;\n  line-height: 20px;\n  margin-left: -25px;\n  margin-top: -10px;\n  position: absolute;\n  text-align: center;\n  top: 50%;\n  width: 50px;\n}\n\n.viewer-title {\n  color: #ccc;\n  display: inline-block;\n  font-size: 12px;\n  line-height: 1;\n  margin: 0 5% 5px;\n  max-width: 90%;\n  opacity: 0.8;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  -webkit-transition: opacity 0.15s;\n  transition: opacity 0.15s;\n  white-space: nowrap;\n}\n\n.viewer-title:hover {\n  opacity: 1;\n}\n\n.viewer-button {\n  background-color: rgba(0, 0, 0, 0.5);\n  border-radius: 50%;\n  cursor: pointer;\n  height: 80px;\n  overflow: hidden;\n  position: absolute;\n  right: -40px;\n  top: -40px;\n  -webkit-transition: background-color 0.15s;\n  transition: background-color 0.15s;\n  width: 80px;\n}\n\n.viewer-button:focus,\n.viewer-button:hover {\n  background-color: rgba(0, 0, 0, 0.8);\n}\n\n.viewer-button:focus {\n  -webkit-box-shadow: 0 0 3px #fff;\n  box-shadow: 0 0 3px #fff;\n  outline: 0;\n}\n\n.viewer-button::before {\n  bottom: 15px;\n  left: 15px;\n  position: absolute;\n}\n\n.viewer-fixed {\n  position: fixed;\n}\n\n.viewer-open {\n  overflow: hidden;\n}\n\n.viewer-show {\n  display: block;\n}\n\n.viewer-hide {\n  display: none;\n}\n\n.viewer-backdrop {\n  background-color: rgba(0, 0, 0, 0.5);\n}\n\n.viewer-invisible {\n  visibility: hidden;\n}\n\n.viewer-move {\n  cursor: move;\n  cursor: -webkit-grab;\n  cursor: grab;\n}\n\n.viewer-fade {\n  opacity: 0;\n}\n\n.viewer-in {\n  opacity: 1;\n}\n\n.viewer-transition {\n  -webkit-transition: all 0.3s;\n  transition: all 0.3s;\n}\n\n@-webkit-keyframes viewer-spinner {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg);\n  }\n\n  100% {\n    -webkit-transform: rotate(360deg);\n    transform: rotate(360deg);\n  }\n}\n\n@keyframes viewer-spinner {\n  0% {\n    -webkit-transform: rotate(0deg);\n    transform: rotate(0deg);\n  }\n\n  100% {\n    -webkit-transform: rotate(360deg);\n    transform: rotate(360deg);\n  }\n}\n\n.viewer-loading::after {\n  -webkit-animation: viewer-spinner 1s linear infinite;\n  animation: viewer-spinner 1s linear infinite;\n  border: 4px solid rgba(255, 255, 255, 0.1);\n  border-left-color: rgba(255, 255, 255, 0.5);\n  border-radius: 50%;\n  content: '';\n  display: inline-block;\n  height: 40px;\n  left: 50%;\n  margin-left: -20px;\n  margin-top: -20px;\n  position: absolute;\n  top: 50%;\n  width: 40px;\n  z-index: 1;\n}\n\n@media (max-width: 767px) {\n  .viewer-hide-xs-down {\n    display: none;\n  }\n}\n\n@media (max-width: 991px) {\n  .viewer-hide-sm-down {\n    display: none;\n  }\n}\n\n@media (max-width: 1199px) {\n  .viewer-hide-md-down {\n    display: none;\n  }\n}\n", ""]);
+exports.push([module.i, "/*!\n * Viewer.js v1.11.3\n * https://fengyuanchen.github.io/viewerjs\n *\n * Copyright 2015-present Chen Fengyuan\n * Released under the MIT license\n *\n * Date: 2023-03-05T07:01:15.525Z\n */\n\n.viewer-zoom-in::before, .viewer-zoom-out::before, .viewer-one-to-one::before, .viewer-reset::before, .viewer-prev::before, .viewer-play::before, .viewer-next::before, .viewer-rotate-left::before, .viewer-rotate-right::before, .viewer-flip-horizontal::before, .viewer-flip-vertical::before, .viewer-fullscreen::before, .viewer-fullscreen-exit::before, .viewer-close::before {\n    background-image: url(\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAARgAAAAUCAYAAABWOyJDAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABx0RVh0U29mdHdhcmUAQWRvYmUgRmlyZXdvcmtzIENTNui8sowAAAQPSURBVHic7Zs/iFxVFMa/0U2UaJGksUgnIVhYxVhpjDbZCBmLdAYECxsRFBTUamcXUiSNncgKQbSxsxH8gzAP3FU2jY0kKKJNiiiIghFlccnP4p3nPCdv3p9778vsLOcHB2bfveeb7955c3jvvNkBIMdxnD64a94GHMfZu3iBcRynN7zAOI7TG15gHCeeNUkr8zaxG2lbYDYsdgMbktBsP03jdQwljSXdtBhLOmtjowC9Mg9L+knSlcD8TNKpSA9lBpK2JF2VdDSR5n5J64m0qli399hNFMUlpshQii5jbXTbHGviB0nLNeNDSd9VO4A2UdB2fp+x0eCnaXxWXGA2X0au/3HgN9P4LFCjIANOJdrLr0zzZ+BEpNYDwKbpnQMeAw4m8HjQtM6Z9qa917zPQwFr3M5KgA6J5rTJCdFZJj9/lyvGhsDvwFNVuV2MhhjrK6b9bFiE+j1r87eBl4HDwCF7/U/k+ofAX5b/EXBv5JoLMuILzf3Ap6Z3EzgdqHMCuF7hcQf4HDgeoHnccncqdK/TvSDWffFXI/exICY/xZyqc6XLWF1UFZna4gJ7q8BsRvgd2/xXpo6P+D9dfT7PpECtA3cnWPM0GXGFZh/wgWltA+cDNC7X+AP4GzjZQe+k5dRxuYPeiuXU7e1qwLpDz7dFjXKRaSwuMLvAlG8zZlG+YmiK1HoFqT7wP2z+4Q45TfEGcMt01xLoNZEBTwRqD4BLpnMLeC1A41UmVxsXgXeBayV/Wx20rpTyrpnWRft7p6O/FdqzGrDukPNtkaMoMo3FBdBSQMOnYBCReyf05s126fU9ytfX98+mY54Kxnp7S9K3kj6U9KYdG0h6UdLbkh7poFXMfUnSOyVvL0h6VtIXHbS6nOP+s/Zm9mvyXW1uuC9ohZ72E9uDmXWLJOB1GxsH+DxPftsB8B6wlGDN02TAkxG6+4D3TWsbeC5CS8CDFce+AW500LhhOW2020TRjK3b21HEmgti9m0RonxbdMZeVzV+/4tF3cBpP7E9mKHNL5q8h5g0eYsCMQz0epq8gQrwMXAgcs0FGXGFRcB9wCemF9PkbYqM/Bas7fxLwNeJPdTdpo4itQti8lPMqTpXuozVRVXPpbHI3KkNTB1NfkL81j2mvhDp91HgV9MKuRIqrykj3WPq4rHyL+axj8/qGPmTqi6F9YDlHOvJU6oYcTsh/TYSzWmTE6JT19CtLTJt32D6CmHe0eQn1O8z5AXgT4sx4Vcu0/EQecMydB8z0hUWkTd2t4CrwNEePqMBcAR4mrBbwyXLPWJa8zrXmmLEhNBmfpkuY2102xxrih+pb+ieAb6vGhuA97UcJ5KR8gZ77K+99xxeYBzH6Q3/Z0fHcXrDC4zjOL3hBcZxnN74F+zlvXFWXF9PAAAAAElFTkSuQmCC\");\n    background-repeat: no-repeat;\n    background-size: 280px;\n    color: transparent;\n    display: block;\n    font-size: 0;\n    height: 20px;\n    line-height: 0;\n    width: 20px;\n  }\n\n.viewer-zoom-in::before {\n  background-position: 0 0;\n  content: \"Zoom In\";\n}\n\n.viewer-zoom-out::before {\n  background-position: -20px 0;\n  content: \"Zoom Out\";\n}\n\n.viewer-one-to-one::before {\n  background-position: -40px 0;\n  content: \"One to One\";\n}\n\n.viewer-reset::before {\n  background-position: -60px 0;\n  content: \"Reset\";\n}\n\n.viewer-prev::before {\n  background-position: -80px 0;\n  content: \"Previous\";\n}\n\n.viewer-play::before {\n  background-position: -100px 0;\n  content: \"Play\";\n}\n\n.viewer-next::before {\n  background-position: -120px 0;\n  content: \"Next\";\n}\n\n.viewer-rotate-left::before {\n  background-position: -140px 0;\n  content: \"Rotate Left\";\n}\n\n.viewer-rotate-right::before {\n  background-position: -160px 0;\n  content: \"Rotate Right\";\n}\n\n.viewer-flip-horizontal::before {\n  background-position: -180px 0;\n  content: \"Flip Horizontal\";\n}\n\n.viewer-flip-vertical::before {\n  background-position: -200px 0;\n  content: \"Flip Vertical\";\n}\n\n.viewer-fullscreen::before {\n  background-position: -220px 0;\n  content: \"Enter Full Screen\";\n}\n\n.viewer-fullscreen-exit::before {\n  background-position: -240px 0;\n  content: \"Exit Full Screen\";\n}\n\n.viewer-close::before {\n  background-position: -260px 0;\n  content: \"Close\";\n}\n\n.viewer-container {\n  bottom: 0;\n  direction: ltr;\n  font-size: 0;\n  left: 0;\n  line-height: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  -webkit-tap-highlight-color: transparent;\n  top: 0;\n  -ms-touch-action: none;\n      touch-action: none;\n  -webkit-touch-callout: none;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n      -ms-user-select: none;\n          user-select: none;\n}\n\n.viewer-container::-moz-selection, .viewer-container *::-moz-selection {\n    background-color: transparent;\n  }\n\n.viewer-container::selection,\n  .viewer-container *::selection {\n    background-color: transparent;\n  }\n\n.viewer-container:focus {\n    outline: 0;\n  }\n\n.viewer-container img {\n    display: block;\n    height: auto;\n    max-height: none !important;\n    max-width: none !important;\n    min-height: 0 !important;\n    min-width: 0 !important;\n    width: 100%;\n  }\n\n.viewer-canvas {\n  bottom: 0;\n  left: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  top: 0;\n}\n\n.viewer-canvas > img {\n    height: auto;\n    margin: 15px auto;\n    max-width: 90% !important;\n    width: auto;\n  }\n\n.viewer-footer {\n  bottom: 0;\n  left: 0;\n  overflow: hidden;\n  position: absolute;\n  right: 0;\n  text-align: center;\n}\n\n.viewer-navbar {\n  background-color: rgba(0, 0, 0, 50%);\n  overflow: hidden;\n}\n\n.viewer-list {\n  box-sizing: content-box;\n  height: 50px;\n  margin: 0;\n  overflow: hidden;\n  padding: 1px 0;\n}\n\n.viewer-list > li {\n    color: transparent;\n    cursor: pointer;\n    float: left;\n    font-size: 0;\n    height: 50px;\n    line-height: 0;\n    opacity: 0.5;\n    overflow: hidden;\n    transition: opacity 0.15s;\n    width: 30px;\n  }\n\n.viewer-list > li:focus,\n    .viewer-list > li:hover {\n      opacity: 0.75;\n    }\n\n.viewer-list > li:focus {\n      outline: 0;\n    }\n\n.viewer-list > li + li {\n      margin-left: 1px;\n    }\n\n.viewer-list > .viewer-loading {\n    position: relative;\n  }\n\n.viewer-list > .viewer-loading::after {\n      border-width: 2px;\n      height: 20px;\n      margin-left: -10px;\n      margin-top: -10px;\n      width: 20px;\n    }\n\n.viewer-list > .viewer-active,\n  .viewer-list > .viewer-active:focus,\n  .viewer-list > .viewer-active:hover {\n    opacity: 1;\n  }\n\n.viewer-player {\n  background-color: #000;\n  bottom: 0;\n  cursor: none;\n  display: none;\n  left: 0;\n  position: absolute;\n  right: 0;\n  top: 0;\n  z-index: 1;\n}\n\n.viewer-player > img {\n    left: 0;\n    position: absolute;\n    top: 0;\n  }\n\n.viewer-toolbar > ul {\n    display: inline-block;\n    margin: 0 auto 5px;\n    overflow: hidden;\n    padding: 6px 3px;\n  }\n\n.viewer-toolbar > ul > li {\n      background-color: rgba(0, 0, 0, 50%);\n      border-radius: 50%;\n      cursor: pointer;\n      float: left;\n      height: 24px;\n      overflow: hidden;\n      transition: background-color 0.15s;\n      width: 24px;\n    }\n\n.viewer-toolbar > ul > li:focus,\n      .viewer-toolbar > ul > li:hover {\n        background-color: rgba(0, 0, 0, 80%);\n      }\n\n.viewer-toolbar > ul > li:focus {\n        box-shadow: 0 0 3px #fff;\n        outline: 0;\n        position: relative;\n        z-index: 1;\n      }\n\n.viewer-toolbar > ul > li::before {\n        margin: 2px;\n      }\n\n.viewer-toolbar > ul > li + li {\n        margin-left: 1px;\n      }\n\n.viewer-toolbar > ul > .viewer-small {\n      height: 18px;\n      margin-bottom: 3px;\n      margin-top: 3px;\n      width: 18px;\n    }\n\n.viewer-toolbar > ul > .viewer-small::before {\n        margin: -1px;\n      }\n\n.viewer-toolbar > ul > .viewer-large {\n      height: 30px;\n      margin-bottom: -3px;\n      margin-top: -3px;\n      width: 30px;\n    }\n\n.viewer-toolbar > ul > .viewer-large::before {\n        margin: 5px;\n      }\n\n.viewer-tooltip {\n  background-color: rgba(0, 0, 0, 80%);\n  border-radius: 10px;\n  color: #fff;\n  display: none;\n  font-size: 12px;\n  height: 20px;\n  left: 50%;\n  line-height: 20px;\n  margin-left: -25px;\n  margin-top: -10px;\n  position: absolute;\n  text-align: center;\n  top: 50%;\n  width: 50px;\n}\n\n.viewer-title {\n  color: #ccc;\n  display: inline-block;\n  font-size: 12px;\n  line-height: 1.2;\n  margin: 5px 5%;\n  max-width: 90%;\n  min-height: 14px;\n  opacity: 0.8;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  transition: opacity 0.15s;\n  white-space: nowrap;\n}\n\n.viewer-title:hover {\n    opacity: 1;\n  }\n\n.viewer-button {\n  -webkit-app-region: no-drag;\n  background-color: rgba(0, 0, 0, 50%);\n  border-radius: 50%;\n  cursor: pointer;\n  height: 80px;\n  overflow: hidden;\n  position: absolute;\n  right: -40px;\n  top: -40px;\n  transition: background-color 0.15s;\n  width: 80px;\n}\n\n.viewer-button:focus,\n  .viewer-button:hover {\n    background-color: rgba(0, 0, 0, 80%);\n  }\n\n.viewer-button:focus {\n    box-shadow: 0 0 3px #fff;\n    outline: 0;\n  }\n\n.viewer-button::before {\n    bottom: 15px;\n    left: 15px;\n    position: absolute;\n  }\n\n.viewer-fixed {\n  position: fixed;\n}\n\n.viewer-open {\n  overflow: hidden;\n}\n\n.viewer-show {\n  display: block;\n}\n\n.viewer-hide {\n  display: none;\n}\n\n.viewer-backdrop {\n  background-color: rgba(0, 0, 0, 50%);\n}\n\n.viewer-invisible {\n  visibility: hidden;\n}\n\n.viewer-move {\n  cursor: move;\n  cursor: grab;\n}\n\n.viewer-fade {\n  opacity: 0;\n}\n\n.viewer-in {\n  opacity: 1;\n}\n\n.viewer-transition {\n  transition: all 0.3s;\n}\n\n@keyframes viewer-spinner {\n  0% {\n    transform: rotate(0deg);\n  }\n\n  100% {\n    transform: rotate(360deg);\n  }\n}\n\n.viewer-loading::after {\n    animation: viewer-spinner 1s linear infinite;\n    border: 4px solid rgba(255, 255, 255, 10%);\n    border-left-color: rgba(255, 255, 255, 50%);\n    border-radius: 50%;\n    content: \"\";\n    display: inline-block;\n    height: 40px;\n    left: 50%;\n    margin-left: -20px;\n    margin-top: -20px;\n    position: absolute;\n    top: 50%;\n    width: 40px;\n    z-index: 1;\n  }\n\n@media (max-width: 767px) {\n  .viewer-hide-xs-down {\n    display: none;\n  }\n}\n\n@media (max-width: 991px) {\n  .viewer-hide-sm-down {\n    display: none;\n  }\n}\n\n@media (max-width: 1199px) {\n  .viewer-hide-md-down {\n    display: none;\n  }\n}\n", ""]);
 
 // exports
 
@@ -72959,7 +72746,7 @@ exports = module.exports = __webpack_require__(1)(false);
 
 
 // module
-exports.push([module.i, "/* BASICS */\n\n.CodeMirror {\n  /* Set height, width, borders, and global font properties here */\n  font-family: monospace;\n  height: 300px;\n  color: black;\n  direction: ltr;\n}\n\n/* PADDING */\n\n.CodeMirror-lines {\n  padding: 4px 0; /* Vertical padding around content */\n}\n.CodeMirror pre.CodeMirror-line,\n.CodeMirror pre.CodeMirror-line-like {\n  padding: 0 4px; /* Horizontal padding of content */\n}\n\n.CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {\n  background-color: white; /* The little square between H and V scrollbars */\n}\n\n/* GUTTER */\n\n.CodeMirror-gutters {\n  border-right: 1px solid #ddd;\n  background-color: #f7f7f7;\n  white-space: nowrap;\n}\n.CodeMirror-linenumbers {}\n.CodeMirror-linenumber {\n  padding: 0 3px 0 5px;\n  min-width: 20px;\n  text-align: right;\n  color: #999;\n  white-space: nowrap;\n}\n\n.CodeMirror-guttermarker { color: black; }\n.CodeMirror-guttermarker-subtle { color: #999; }\n\n/* CURSOR */\n\n.CodeMirror-cursor {\n  border-left: 1px solid black;\n  border-right: none;\n  width: 0;\n}\n/* Shown when moving in bi-directional text */\n.CodeMirror div.CodeMirror-secondarycursor {\n  border-left: 1px solid silver;\n}\n.cm-fat-cursor .CodeMirror-cursor {\n  width: auto;\n  border: 0 !important;\n  background: #7e7;\n}\n.cm-fat-cursor div.CodeMirror-cursors {\n  z-index: 1;\n}\n.cm-fat-cursor-mark {\n  background-color: rgba(20, 255, 20, 0.5);\n  -webkit-animation: blink 1.06s steps(1) infinite;\n  -moz-animation: blink 1.06s steps(1) infinite;\n  animation: blink 1.06s steps(1) infinite;\n}\n.cm-animate-fat-cursor {\n  width: auto;\n  border: 0;\n  -webkit-animation: blink 1.06s steps(1) infinite;\n  -moz-animation: blink 1.06s steps(1) infinite;\n  animation: blink 1.06s steps(1) infinite;\n  background-color: #7e7;\n}\n@-moz-keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n@-webkit-keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n@keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n\n/* Can style cursor different in overwrite (non-insert) mode */\n.CodeMirror-overwrite .CodeMirror-cursor {}\n\n.cm-tab { display: inline-block; text-decoration: inherit; }\n\n.CodeMirror-rulers {\n  position: absolute;\n  left: 0; right: 0; top: -50px; bottom: 0;\n  overflow: hidden;\n}\n.CodeMirror-ruler {\n  border-left: 1px solid #ccc;\n  top: 0; bottom: 0;\n  position: absolute;\n}\n\n/* DEFAULT THEME */\n\n.cm-s-default .cm-header {color: blue;}\n.cm-s-default .cm-quote {color: #090;}\n.cm-negative {color: #d44;}\n.cm-positive {color: #292;}\n.cm-header, .cm-strong {font-weight: bold;}\n.cm-em {font-style: italic;}\n.cm-link {text-decoration: underline;}\n.cm-strikethrough {text-decoration: line-through;}\n\n.cm-s-default .cm-keyword {color: #708;}\n.cm-s-default .cm-atom {color: #219;}\n.cm-s-default .cm-number {color: #164;}\n.cm-s-default .cm-def {color: #00f;}\n.cm-s-default .cm-variable,\n.cm-s-default .cm-punctuation,\n.cm-s-default .cm-property,\n.cm-s-default .cm-operator {}\n.cm-s-default .cm-variable-2 {color: #05a;}\n.cm-s-default .cm-variable-3, .cm-s-default .cm-type {color: #085;}\n.cm-s-default .cm-comment {color: #a50;}\n.cm-s-default .cm-string {color: #a11;}\n.cm-s-default .cm-string-2 {color: #f50;}\n.cm-s-default .cm-meta {color: #555;}\n.cm-s-default .cm-qualifier {color: #555;}\n.cm-s-default .cm-builtin {color: #30a;}\n.cm-s-default .cm-bracket {color: #997;}\n.cm-s-default .cm-tag {color: #170;}\n.cm-s-default .cm-attribute {color: #00c;}\n.cm-s-default .cm-hr {color: #999;}\n.cm-s-default .cm-link {color: #00c;}\n\n.cm-s-default .cm-error {color: #f00;}\n.cm-invalidchar {color: #f00;}\n\n.CodeMirror-composing { border-bottom: 2px solid; }\n\n/* Default styles for common addons */\n\ndiv.CodeMirror span.CodeMirror-matchingbracket {color: #0b0;}\ndiv.CodeMirror span.CodeMirror-nonmatchingbracket {color: #a22;}\n.CodeMirror-matchingtag { background: rgba(255, 150, 0, .3); }\n.CodeMirror-activeline-background {background: #e8f2ff;}\n\n/* STOP */\n\n/* The rest of this file contains styles related to the mechanics of\n   the editor. You probably shouldn't touch them. */\n\n.CodeMirror {\n  position: relative;\n  overflow: hidden;\n  background: white;\n}\n\n.CodeMirror-scroll {\n  overflow: scroll !important; /* Things will break if this is overridden */\n  /* 50px is the magic margin used to hide the element's real scrollbars */\n  /* See overflow: hidden in .CodeMirror */\n  margin-bottom: -50px; margin-right: -50px;\n  padding-bottom: 50px;\n  height: 100%;\n  outline: none; /* Prevent dragging from highlighting the element */\n  position: relative;\n}\n.CodeMirror-sizer {\n  position: relative;\n  border-right: 50px solid transparent;\n}\n\n/* The fake, visible scrollbars. Used to force redraw during scrolling\n   before actual scrolling happens, thus preventing shaking and\n   flickering artifacts. */\n.CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {\n  position: absolute;\n  z-index: 6;\n  display: none;\n  outline: none;\n}\n.CodeMirror-vscrollbar {\n  right: 0; top: 0;\n  overflow-x: hidden;\n  overflow-y: scroll;\n}\n.CodeMirror-hscrollbar {\n  bottom: 0; left: 0;\n  overflow-y: hidden;\n  overflow-x: scroll;\n}\n.CodeMirror-scrollbar-filler {\n  right: 0; bottom: 0;\n}\n.CodeMirror-gutter-filler {\n  left: 0; bottom: 0;\n}\n\n.CodeMirror-gutters {\n  position: absolute; left: 0; top: 0;\n  min-height: 100%;\n  z-index: 3;\n}\n.CodeMirror-gutter {\n  white-space: normal;\n  height: 100%;\n  display: inline-block;\n  vertical-align: top;\n  margin-bottom: -50px;\n}\n.CodeMirror-gutter-wrapper {\n  position: absolute;\n  z-index: 4;\n  background: none !important;\n  border: none !important;\n}\n.CodeMirror-gutter-background {\n  position: absolute;\n  top: 0; bottom: 0;\n  z-index: 4;\n}\n.CodeMirror-gutter-elt {\n  position: absolute;\n  cursor: default;\n  z-index: 4;\n}\n.CodeMirror-gutter-wrapper ::selection { background-color: transparent }\n.CodeMirror-gutter-wrapper ::-moz-selection { background-color: transparent }\n\n.CodeMirror-lines {\n  cursor: text;\n  min-height: 1px; /* prevents collapsing before first draw */\n}\n.CodeMirror pre.CodeMirror-line,\n.CodeMirror pre.CodeMirror-line-like {\n  /* Reset some styles that the rest of the page might have set */\n  -moz-border-radius: 0; -webkit-border-radius: 0; border-radius: 0;\n  border-width: 0;\n  background: transparent;\n  font-family: inherit;\n  font-size: inherit;\n  margin: 0;\n  white-space: pre;\n  word-wrap: normal;\n  line-height: inherit;\n  color: inherit;\n  z-index: 2;\n  position: relative;\n  overflow: visible;\n  -webkit-tap-highlight-color: transparent;\n  -webkit-font-variant-ligatures: contextual;\n  font-variant-ligatures: contextual;\n}\n.CodeMirror-wrap pre.CodeMirror-line,\n.CodeMirror-wrap pre.CodeMirror-line-like {\n  word-wrap: break-word;\n  white-space: pre-wrap;\n  word-break: normal;\n}\n\n.CodeMirror-linebackground {\n  position: absolute;\n  left: 0; right: 0; top: 0; bottom: 0;\n  z-index: 0;\n}\n\n.CodeMirror-linewidget {\n  position: relative;\n  z-index: 2;\n  padding: 0.1px; /* Force widget margins to stay inside of the container */\n}\n\n.CodeMirror-widget {}\n\n.CodeMirror-rtl pre { direction: rtl; }\n\n.CodeMirror-code {\n  outline: none;\n}\n\n/* Force content-box sizing for the elements where we expect it */\n.CodeMirror-scroll,\n.CodeMirror-sizer,\n.CodeMirror-gutter,\n.CodeMirror-gutters,\n.CodeMirror-linenumber {\n  -moz-box-sizing: content-box;\n  box-sizing: content-box;\n}\n\n.CodeMirror-measure {\n  position: absolute;\n  width: 100%;\n  height: 0;\n  overflow: hidden;\n  visibility: hidden;\n}\n\n.CodeMirror-cursor {\n  position: absolute;\n  pointer-events: none;\n}\n.CodeMirror-measure pre { position: static; }\n\ndiv.CodeMirror-cursors {\n  visibility: hidden;\n  position: relative;\n  z-index: 3;\n}\ndiv.CodeMirror-dragcursors {\n  visibility: visible;\n}\n\n.CodeMirror-focused div.CodeMirror-cursors {\n  visibility: visible;\n}\n\n.CodeMirror-selected { background: #d9d9d9; }\n.CodeMirror-focused .CodeMirror-selected { background: #d7d4f0; }\n.CodeMirror-crosshair { cursor: crosshair; }\n.CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection { background: #d7d4f0; }\n.CodeMirror-line::-moz-selection, .CodeMirror-line > span::-moz-selection, .CodeMirror-line > span > span::-moz-selection { background: #d7d4f0; }\n\n.cm-searching {\n  background-color: #ffa;\n  background-color: rgba(255, 255, 0, .4);\n}\n\n/* Used to force a border model for a node */\n.cm-force-border { padding-right: .1px; }\n\n@media print {\n  /* Hide the cursor when printing */\n  .CodeMirror div.CodeMirror-cursors {\n    visibility: hidden;\n  }\n}\n\n/* See issue #2901 */\n.cm-tab-wrap-hack:after { content: ''; }\n\n/* Help users use markselection to safely style text background */\nspan.CodeMirror-selectedtext { background: none; }\n", ""]);
+exports.push([module.i, "/* BASICS */\n\n.CodeMirror {\n  /* Set height, width, borders, and global font properties here */\n  font-family: monospace;\n  height: 300px;\n  color: black;\n  direction: ltr;\n}\n\n/* PADDING */\n\n.CodeMirror-lines {\n  padding: 4px 0; /* Vertical padding around content */\n}\n.CodeMirror pre.CodeMirror-line,\n.CodeMirror pre.CodeMirror-line-like {\n  padding: 0 4px; /* Horizontal padding of content */\n}\n\n.CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {\n  background-color: white; /* The little square between H and V scrollbars */\n}\n\n/* GUTTER */\n\n.CodeMirror-gutters {\n  border-right: 1px solid #ddd;\n  background-color: #f7f7f7;\n  white-space: nowrap;\n}\n.CodeMirror-linenumbers {}\n.CodeMirror-linenumber {\n  padding: 0 3px 0 5px;\n  min-width: 20px;\n  text-align: right;\n  color: #999;\n  white-space: nowrap;\n}\n\n.CodeMirror-guttermarker { color: black; }\n.CodeMirror-guttermarker-subtle { color: #999; }\n\n/* CURSOR */\n\n.CodeMirror-cursor {\n  border-left: 1px solid black;\n  border-right: none;\n  width: 0;\n}\n/* Shown when moving in bi-directional text */\n.CodeMirror div.CodeMirror-secondarycursor {\n  border-left: 1px solid silver;\n}\n.cm-fat-cursor .CodeMirror-cursor {\n  width: auto;\n  border: 0 !important;\n  background: #7e7;\n}\n.cm-fat-cursor div.CodeMirror-cursors {\n  z-index: 1;\n}\n.cm-fat-cursor .CodeMirror-line::selection,\n.cm-fat-cursor .CodeMirror-line > span::selection, \n.cm-fat-cursor .CodeMirror-line > span > span::selection { background: transparent; }\n.cm-fat-cursor .CodeMirror-line::-moz-selection,\n.cm-fat-cursor .CodeMirror-line > span::-moz-selection,\n.cm-fat-cursor .CodeMirror-line > span > span::-moz-selection { background: transparent; }\n.cm-fat-cursor { caret-color: transparent; }\n@-moz-keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n@-webkit-keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n@keyframes blink {\n  0% {}\n  50% { background-color: transparent; }\n  100% {}\n}\n\n/* Can style cursor different in overwrite (non-insert) mode */\n.CodeMirror-overwrite .CodeMirror-cursor {}\n\n.cm-tab { display: inline-block; text-decoration: inherit; }\n\n.CodeMirror-rulers {\n  position: absolute;\n  left: 0; right: 0; top: -50px; bottom: 0;\n  overflow: hidden;\n}\n.CodeMirror-ruler {\n  border-left: 1px solid #ccc;\n  top: 0; bottom: 0;\n  position: absolute;\n}\n\n/* DEFAULT THEME */\n\n.cm-s-default .cm-header {color: blue;}\n.cm-s-default .cm-quote {color: #090;}\n.cm-negative {color: #d44;}\n.cm-positive {color: #292;}\n.cm-header, .cm-strong {font-weight: bold;}\n.cm-em {font-style: italic;}\n.cm-link {text-decoration: underline;}\n.cm-strikethrough {text-decoration: line-through;}\n\n.cm-s-default .cm-keyword {color: #708;}\n.cm-s-default .cm-atom {color: #219;}\n.cm-s-default .cm-number {color: #164;}\n.cm-s-default .cm-def {color: #00f;}\n.cm-s-default .cm-variable,\n.cm-s-default .cm-punctuation,\n.cm-s-default .cm-property,\n.cm-s-default .cm-operator {}\n.cm-s-default .cm-variable-2 {color: #05a;}\n.cm-s-default .cm-variable-3, .cm-s-default .cm-type {color: #085;}\n.cm-s-default .cm-comment {color: #a50;}\n.cm-s-default .cm-string {color: #a11;}\n.cm-s-default .cm-string-2 {color: #f50;}\n.cm-s-default .cm-meta {color: #555;}\n.cm-s-default .cm-qualifier {color: #555;}\n.cm-s-default .cm-builtin {color: #30a;}\n.cm-s-default .cm-bracket {color: #997;}\n.cm-s-default .cm-tag {color: #170;}\n.cm-s-default .cm-attribute {color: #00c;}\n.cm-s-default .cm-hr {color: #999;}\n.cm-s-default .cm-link {color: #00c;}\n\n.cm-s-default .cm-error {color: #f00;}\n.cm-invalidchar {color: #f00;}\n\n.CodeMirror-composing { border-bottom: 2px solid; }\n\n/* Default styles for common addons */\n\ndiv.CodeMirror span.CodeMirror-matchingbracket {color: #0b0;}\ndiv.CodeMirror span.CodeMirror-nonmatchingbracket {color: #a22;}\n.CodeMirror-matchingtag { background: rgba(255, 150, 0, .3); }\n.CodeMirror-activeline-background {background: #e8f2ff;}\n\n/* STOP */\n\n/* The rest of this file contains styles related to the mechanics of\n   the editor. You probably shouldn't touch them. */\n\n.CodeMirror {\n  position: relative;\n  overflow: hidden;\n  background: white;\n}\n\n.CodeMirror-scroll {\n  overflow: scroll !important; /* Things will break if this is overridden */\n  /* 50px is the magic margin used to hide the element's real scrollbars */\n  /* See overflow: hidden in .CodeMirror */\n  margin-bottom: -50px; margin-right: -50px;\n  padding-bottom: 50px;\n  height: 100%;\n  outline: none; /* Prevent dragging from highlighting the element */\n  position: relative;\n  z-index: 0;\n}\n.CodeMirror-sizer {\n  position: relative;\n  border-right: 50px solid transparent;\n}\n\n/* The fake, visible scrollbars. Used to force redraw during scrolling\n   before actual scrolling happens, thus preventing shaking and\n   flickering artifacts. */\n.CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {\n  position: absolute;\n  z-index: 6;\n  display: none;\n  outline: none;\n}\n.CodeMirror-vscrollbar {\n  right: 0; top: 0;\n  overflow-x: hidden;\n  overflow-y: scroll;\n}\n.CodeMirror-hscrollbar {\n  bottom: 0; left: 0;\n  overflow-y: hidden;\n  overflow-x: scroll;\n}\n.CodeMirror-scrollbar-filler {\n  right: 0; bottom: 0;\n}\n.CodeMirror-gutter-filler {\n  left: 0; bottom: 0;\n}\n\n.CodeMirror-gutters {\n  position: absolute; left: 0; top: 0;\n  min-height: 100%;\n  z-index: 3;\n}\n.CodeMirror-gutter {\n  white-space: normal;\n  height: 100%;\n  display: inline-block;\n  vertical-align: top;\n  margin-bottom: -50px;\n}\n.CodeMirror-gutter-wrapper {\n  position: absolute;\n  z-index: 4;\n  background: none !important;\n  border: none !important;\n}\n.CodeMirror-gutter-background {\n  position: absolute;\n  top: 0; bottom: 0;\n  z-index: 4;\n}\n.CodeMirror-gutter-elt {\n  position: absolute;\n  cursor: default;\n  z-index: 4;\n}\n.CodeMirror-gutter-wrapper ::selection { background-color: transparent }\n.CodeMirror-gutter-wrapper ::-moz-selection { background-color: transparent }\n\n.CodeMirror-lines {\n  cursor: text;\n  min-height: 1px; /* prevents collapsing before first draw */\n}\n.CodeMirror pre.CodeMirror-line,\n.CodeMirror pre.CodeMirror-line-like {\n  /* Reset some styles that the rest of the page might have set */\n  -moz-border-radius: 0; -webkit-border-radius: 0; border-radius: 0;\n  border-width: 0;\n  background: transparent;\n  font-family: inherit;\n  font-size: inherit;\n  margin: 0;\n  white-space: pre;\n  word-wrap: normal;\n  line-height: inherit;\n  color: inherit;\n  z-index: 2;\n  position: relative;\n  overflow: visible;\n  -webkit-tap-highlight-color: transparent;\n  -webkit-font-variant-ligatures: contextual;\n  font-variant-ligatures: contextual;\n}\n.CodeMirror-wrap pre.CodeMirror-line,\n.CodeMirror-wrap pre.CodeMirror-line-like {\n  word-wrap: break-word;\n  white-space: pre-wrap;\n  word-break: normal;\n}\n\n.CodeMirror-linebackground {\n  position: absolute;\n  left: 0; right: 0; top: 0; bottom: 0;\n  z-index: 0;\n}\n\n.CodeMirror-linewidget {\n  position: relative;\n  z-index: 2;\n  padding: 0.1px; /* Force widget margins to stay inside of the container */\n}\n\n.CodeMirror-widget {}\n\n.CodeMirror-rtl pre { direction: rtl; }\n\n.CodeMirror-code {\n  outline: none;\n}\n\n/* Force content-box sizing for the elements where we expect it */\n.CodeMirror-scroll,\n.CodeMirror-sizer,\n.CodeMirror-gutter,\n.CodeMirror-gutters,\n.CodeMirror-linenumber {\n  -moz-box-sizing: content-box;\n  box-sizing: content-box;\n}\n\n.CodeMirror-measure {\n  position: absolute;\n  width: 100%;\n  height: 0;\n  overflow: hidden;\n  visibility: hidden;\n}\n\n.CodeMirror-cursor {\n  position: absolute;\n  pointer-events: none;\n}\n.CodeMirror-measure pre { position: static; }\n\ndiv.CodeMirror-cursors {\n  visibility: hidden;\n  position: relative;\n  z-index: 3;\n}\ndiv.CodeMirror-dragcursors {\n  visibility: visible;\n}\n\n.CodeMirror-focused div.CodeMirror-cursors {\n  visibility: visible;\n}\n\n.CodeMirror-selected { background: #d9d9d9; }\n.CodeMirror-focused .CodeMirror-selected { background: #d7d4f0; }\n.CodeMirror-crosshair { cursor: crosshair; }\n.CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection { background: #d7d4f0; }\n.CodeMirror-line::-moz-selection, .CodeMirror-line > span::-moz-selection, .CodeMirror-line > span > span::-moz-selection { background: #d7d4f0; }\n\n.cm-searching {\n  background-color: #ffa;\n  background-color: rgba(255, 255, 0, .4);\n}\n\n/* Used to force a border model for a node */\n.cm-force-border { padding-right: .1px; }\n\n@media print {\n  /* Hide the cursor when printing */\n  .CodeMirror div.CodeMirror-cursors {\n    visibility: hidden;\n  }\n}\n\n/* See issue #2901 */\n.cm-tab-wrap-hack:after { content: ''; }\n\n/* Help users use markselection to safely style text background */\nspan.CodeMirror-selectedtext { background: none; }\n", ""]);
 
 // exports
 
@@ -73014,7 +72801,7 @@ exports.push([module.i, "/*\n\n    Name:       dracula\n    Author:     Michael 
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -73906,7 +73693,7 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -73926,7 +73713,7 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
     {name: "Brainfuck", mime: "text/x-brainfuck", mode: "brainfuck", ext: ["b", "bf"]},
     {name: "C", mime: "text/x-csrc", mode: "clike", ext: ["c", "h", "ino"]},
     {name: "C++", mime: "text/x-c++src", mode: "clike", ext: ["cpp", "c++", "cc", "cxx", "hpp", "h++", "hh", "hxx"], alias: ["cpp"]},
-    {name: "Cobol", mime: "text/x-cobol", mode: "cobol", ext: ["cob", "cpy"]},
+    {name: "Cobol", mime: "text/x-cobol", mode: "cobol", ext: ["cob", "cpy", "cbl"]},
     {name: "C#", mime: "text/x-csharp", mode: "clike", ext: ["cs"], alias: ["csharp", "cs"]},
     {name: "Clojure", mime: "text/x-clojure", mode: "clojure", ext: ["clj", "cljc", "cljx"]},
     {name: "ClojureScript", mime: "text/x-clojurescript", mode: "clojure", ext: ["cljs"]},
@@ -74133,7 +73920,7 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -74214,11 +74001,11 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
   }
 
   var phpKeywords = "abstract and array as break case catch class clone const continue declare default " +
-    "do else elseif enddeclare endfor endforeach endif endswitch endwhile extends final " +
+    "do else elseif enddeclare endfor endforeach endif endswitch endwhile enum extends final " +
     "for foreach function global goto if implements interface instanceof namespace " +
     "new or private protected public static switch throw trait try use var while xor " +
     "die echo empty exit eval include include_once isset list require require_once return " +
-    "print unset __halt_compiler self static parent yield insteadof finally";
+    "print unset __halt_compiler self static parent yield insteadof finally readonly match";
   var phpAtoms = "true false null TRUE FALSE NULL __CLASS__ __DIR__ __FILE__ __LINE__ __METHOD__ __FUNCTION__ __NAMESPACE__ __TRAIT__";
   var phpBuiltin = "func_num_args func_get_arg func_get_args strlen strcmp strncmp strcasecmp strncasecmp each error_reporting define defined trigger_error user_error set_error_handler restore_error_handler get_declared_classes get_loaded_extensions extension_loaded get_extension_funcs debug_backtrace constant bin2hex hex2bin sleep usleep time mktime gmmktime strftime gmstrftime strtotime date gmdate getdate localtime checkdate flush wordwrap htmlspecialchars htmlentities html_entity_decode md5 md5_file crc32 getimagesize image_type_to_mime_type phpinfo phpversion phpcredits strnatcmp strnatcasecmp substr_count strspn strcspn strtok strtoupper strtolower strpos strrpos strrev hebrev hebrevc nl2br basename dirname pathinfo stripslashes stripcslashes strstr stristr strrchr str_shuffle str_word_count strcoll substr substr_replace quotemeta ucfirst ucwords strtr addslashes addcslashes rtrim str_replace str_repeat count_chars chunk_split trim ltrim strip_tags similar_text explode implode setlocale localeconv parse_str str_pad chop strchr sprintf printf vprintf vsprintf sscanf fscanf parse_url urlencode urldecode rawurlencode rawurldecode readlink linkinfo link unlink exec system escapeshellcmd escapeshellarg passthru shell_exec proc_open proc_close rand srand getrandmax mt_rand mt_srand mt_getrandmax base64_decode base64_encode abs ceil floor round is_finite is_nan is_infinite bindec hexdec octdec decbin decoct dechex base_convert number_format fmod ip2long long2ip getenv putenv getopt microtime gettimeofday getrusage uniqid quoted_printable_decode set_time_limit get_cfg_var magic_quotes_runtime set_magic_quotes_runtime get_magic_quotes_gpc get_magic_quotes_runtime import_request_variables error_log serialize unserialize memory_get_usage memory_get_peak_usage var_dump var_export debug_zval_dump print_r highlight_file show_source highlight_string ini_get ini_get_all ini_set ini_alter ini_restore get_include_path set_include_path restore_include_path setcookie header headers_sent connection_aborted connection_status ignore_user_abort parse_ini_file is_uploaded_file move_uploaded_file intval floatval doubleval strval gettype settype is_null is_resource is_bool is_long is_float is_int is_integer is_double is_real is_numeric is_string is_array is_object is_scalar ereg ereg_replace eregi eregi_replace split spliti join sql_regcase dl pclose popen readfile rewind rmdir umask fclose feof fgetc fgets fgetss fread fopen fpassthru ftruncate fstat fseek ftell fflush fwrite fputs mkdir rename copy tempnam tmpfile file file_get_contents file_put_contents stream_select stream_context_create stream_context_set_params stream_context_set_option stream_context_get_options stream_filter_prepend stream_filter_append fgetcsv flock get_meta_tags stream_set_write_buffer set_file_buffer set_socket_blocking stream_set_blocking socket_set_blocking stream_get_meta_data stream_register_wrapper stream_wrapper_register stream_set_timeout socket_set_timeout socket_get_status realpath fnmatch fsockopen pfsockopen pack unpack get_browser crypt opendir closedir chdir getcwd rewinddir readdir dir glob fileatime filectime filegroup fileinode filemtime fileowner fileperms filesize filetype file_exists is_writable is_writeable is_readable is_executable is_file is_dir is_link stat lstat chown touch clearstatcache mail ob_start ob_flush ob_clean ob_end_flush ob_end_clean ob_get_flush ob_get_clean ob_get_length ob_get_level ob_get_status ob_get_contents ob_implicit_flush ob_list_handlers ksort krsort natsort natcasesort asort arsort sort rsort usort uasort uksort shuffle array_walk count end prev next reset current key min max in_array array_search extract compact array_fill range array_multisort array_push array_pop array_shift array_unshift array_splice array_slice array_merge array_merge_recursive array_keys array_values array_count_values array_reverse array_reduce array_pad array_flip array_change_key_case array_rand array_unique array_intersect array_intersect_assoc array_diff array_diff_assoc array_sum array_filter array_map array_chunk array_key_exists array_intersect_key array_combine array_column pos sizeof key_exists assert assert_options version_compare ftok str_rot13 aggregate session_name session_module_name session_save_path session_id session_regenerate_id session_decode session_register session_unregister session_is_registered session_encode session_start session_destroy session_unset session_set_save_handler session_cache_limiter session_cache_expire session_set_cookie_params session_get_cookie_params session_write_close preg_match preg_match_all preg_replace preg_replace_callback preg_split preg_quote preg_grep overload ctype_alnum ctype_alpha ctype_cntrl ctype_digit ctype_lower ctype_graph ctype_print ctype_punct ctype_space ctype_upper ctype_xdigit virtual apache_request_headers apache_note apache_lookup_uri apache_child_terminate apache_setenv apache_response_headers apache_get_version getallheaders mysql_connect mysql_pconnect mysql_close mysql_select_db mysql_create_db mysql_drop_db mysql_query mysql_unbuffered_query mysql_db_query mysql_list_dbs mysql_list_tables mysql_list_fields mysql_list_processes mysql_error mysql_errno mysql_affected_rows mysql_insert_id mysql_result mysql_num_rows mysql_num_fields mysql_fetch_row mysql_fetch_array mysql_fetch_assoc mysql_fetch_object mysql_data_seek mysql_fetch_lengths mysql_fetch_field mysql_field_seek mysql_free_result mysql_field_name mysql_field_table mysql_field_len mysql_field_type mysql_field_flags mysql_escape_string mysql_real_escape_string mysql_stat mysql_thread_id mysql_client_encoding mysql_get_client_info mysql_get_host_info mysql_get_proto_info mysql_get_server_info mysql_info mysql mysql_fieldname mysql_fieldtable mysql_fieldlen mysql_fieldtype mysql_fieldflags mysql_selectdb mysql_createdb mysql_dropdb mysql_freeresult mysql_numfields mysql_numrows mysql_listdbs mysql_listtables mysql_listfields mysql_db_name mysql_dbname mysql_tablename mysql_table_name pg_connect pg_pconnect pg_close pg_connection_status pg_connection_busy pg_connection_reset pg_host pg_dbname pg_port pg_tty pg_options pg_ping pg_query pg_send_query pg_cancel_query pg_fetch_result pg_fetch_row pg_fetch_assoc pg_fetch_array pg_fetch_object pg_fetch_all pg_affected_rows pg_get_result pg_result_seek pg_result_status pg_free_result pg_last_oid pg_num_rows pg_num_fields pg_field_name pg_field_num pg_field_size pg_field_type pg_field_prtlen pg_field_is_null pg_get_notify pg_get_pid pg_result_error pg_last_error pg_last_notice pg_put_line pg_end_copy pg_copy_to pg_copy_from pg_trace pg_untrace pg_lo_create pg_lo_unlink pg_lo_open pg_lo_close pg_lo_read pg_lo_write pg_lo_read_all pg_lo_import pg_lo_export pg_lo_seek pg_lo_tell pg_escape_string pg_escape_bytea pg_unescape_bytea pg_client_encoding pg_set_client_encoding pg_meta_data pg_convert pg_insert pg_update pg_delete pg_select pg_exec pg_getlastoid pg_cmdtuples pg_errormessage pg_numrows pg_numfields pg_fieldname pg_fieldsize pg_fieldtype pg_fieldnum pg_fieldprtlen pg_fieldisnull pg_freeresult pg_result pg_loreadall pg_locreate pg_lounlink pg_loopen pg_loclose pg_loread pg_lowrite pg_loimport pg_loexport http_response_code get_declared_traits getimagesizefromstring socket_import_stream stream_set_chunk_size trait_exists header_register_callback class_uses session_status session_register_shutdown echo print global static exit array empty eval isset unset die include require include_once require_once json_decode json_encode json_last_error json_last_error_msg curl_close curl_copy_handle curl_errno curl_error curl_escape curl_exec curl_file_create curl_getinfo curl_init curl_multi_add_handle curl_multi_close curl_multi_exec curl_multi_getcontent curl_multi_info_read curl_multi_init curl_multi_remove_handle curl_multi_select curl_multi_setopt curl_multi_strerror curl_pause curl_reset curl_setopt_array curl_setopt curl_share_close curl_share_init curl_share_setopt curl_strerror curl_unescape curl_version mysqli_affected_rows mysqli_autocommit mysqli_change_user mysqli_character_set_name mysqli_close mysqli_commit mysqli_connect_errno mysqli_connect_error mysqli_connect mysqli_data_seek mysqli_debug mysqli_dump_debug_info mysqli_errno mysqli_error_list mysqli_error mysqli_fetch_all mysqli_fetch_array mysqli_fetch_assoc mysqli_fetch_field_direct mysqli_fetch_field mysqli_fetch_fields mysqli_fetch_lengths mysqli_fetch_object mysqli_fetch_row mysqli_field_count mysqli_field_seek mysqli_field_tell mysqli_free_result mysqli_get_charset mysqli_get_client_info mysqli_get_client_stats mysqli_get_client_version mysqli_get_connection_stats mysqli_get_host_info mysqli_get_proto_info mysqli_get_server_info mysqli_get_server_version mysqli_info mysqli_init mysqli_insert_id mysqli_kill mysqli_more_results mysqli_multi_query mysqli_next_result mysqli_num_fields mysqli_num_rows mysqli_options mysqli_ping mysqli_prepare mysqli_query mysqli_real_connect mysqli_real_escape_string mysqli_real_query mysqli_reap_async_query mysqli_refresh mysqli_rollback mysqli_select_db mysqli_set_charset mysqli_set_local_infile_default mysqli_set_local_infile_handler mysqli_sqlstate mysqli_ssl_set mysqli_stat mysqli_stmt_init mysqli_store_result mysqli_thread_id mysqli_thread_safe mysqli_use_result mysqli_warning_count";
   CodeMirror.registerHelper("hintWords", "php", [phpKeywords, phpAtoms, phpBuiltin].join(" ").split(" "));
@@ -74229,7 +74016,7 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
     helperType: "php",
     keywords: keywords(phpKeywords),
     blockKeywords: keywords("catch do else elseif for foreach if switch try while finally"),
-    defKeywords: keywords("class function interface namespace trait"),
+    defKeywords: keywords("class enum function interface namespace trait"),
     atoms: keywords(phpAtoms),
     builtin: keywords(phpBuiltin),
     multiLineStrings: true,
@@ -74373,7 +74160,7 @@ CodeMirror.defineMIME("text/x-markdown", "markdown");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -74872,6 +74659,11 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
 
         stream.eatWhile(/[\w\$_]/);
         return "meta";
+      },
+      '"': function(stream, state) {
+        if (!stream.match(/""$/)) return false;
+        state.tokenize = tokenTripleString;
+        return state.tokenize(stream, state);
       }
     },
     modeProps: {fold: ["brace", "import"]}
@@ -74881,8 +74673,8 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
     name: "clike",
     keywords: words("abstract as async await base break case catch checked class const continue" +
                     " default delegate do else enum event explicit extern finally fixed for" +
-                    " foreach goto if implicit in interface internal is lock namespace new" +
-                    " operator out override params private protected public readonly ref return sealed" +
+                    " foreach goto if implicit in init interface internal is lock namespace new" +
+                    " operator out override params private protected public readonly record ref required return sealed" +
                     " sizeof stackalloc static struct switch this throw try typeof unchecked" +
                     " unsafe using virtual void volatile while add alias ascending descending dynamic from get" +
                     " global group into join let orderby partial remove select set value var yield"),
@@ -74891,7 +74683,7 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
                  " UInt64 bool byte char decimal double short int long object"  +
                  " sbyte float string ushort uint ulong"),
     blockKeywords: words("catch class do else finally for foreach if struct switch try while"),
-    defKeywords: words("class interface namespace struct var"),
+    defKeywords: words("class interface namespace record struct var"),
     typeFirstDefinitions: true,
     atoms: words("true false null"),
     hooks: {
@@ -74982,6 +74774,7 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
         return state.tokenize(stream, state);
       },
       "'": function(stream) {
+        if (stream.match(/^(\\[^'\s]+|[^\\'])'/)) return "string-2"
         stream.eatWhile(/[\w\$_\xa1-\uffff]/);
         return "atom";
       },
@@ -75314,7 +75107,7 @@ CodeMirror.defineMode("clike", function(config, parserConfig) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -75350,19 +75143,19 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
 
     if (support.hexNumber &&
       ((ch == "0" && stream.match(/^[xX][0-9a-fA-F]+/))
-      || (ch == "x" || ch == "X") && stream.match(/^'[0-9a-fA-F]+'/))) {
+      || (ch == "x" || ch == "X") && stream.match(/^'[0-9a-fA-F]*'/))) {
       // hex
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/hexadecimal-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/hexadecimal-literals.html
       return "number";
     } else if (support.binaryNumber &&
-      (((ch == "b" || ch == "B") && stream.match(/^'[01]+'/))
+      (((ch == "b" || ch == "B") && stream.match(/^'[01]*'/))
       || (ch == "0" && stream.match(/^b[01]+/)))) {
       // bitstring
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/bit-field-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/bit-value-literals.html
       return "number";
     } else if (ch.charCodeAt(0) > 47 && ch.charCodeAt(0) < 58) {
       // numbers
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/number-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/number-literals.html
       stream.match(/^[0-9]*(\.[0-9]+)?([eE][-+]?[0-9]+)?/);
       support.decimallessFloat && stream.match(/^\.(?!\.)/);
       return "number";
@@ -75371,14 +75164,14 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
       return "variable-3";
     } else if (ch == "'" || (ch == '"' && support.doubleQuote)) {
       // strings
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/string-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/string-literals.html
       state.tokenize = tokenLiteral(ch);
       return state.tokenize(stream, state);
     } else if ((((support.nCharCast && (ch == "n" || ch == "N"))
         || (support.charsetCast && ch == "_" && stream.match(/[a-z][a-z0-9]*/i)))
         && (stream.peek() == "'" || stream.peek() == '"'))) {
       // charset casting: _utf8'str', N'str', n'str'
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/string-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/string-literals.html
       return "keyword";
     } else if (support.escapeConstant && (ch == "e" || ch == "E")
         && (stream.peek() == "'" || (stream.peek() == '"' && support.doubleQuote))) {
@@ -75409,9 +75202,7 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
         return "number";
       if (stream.match(/^\.+/))
         return null
-      // .table_name (ODBC)
-      // // ref: http://dev.mysql.com/doc/refman/5.6/en/identifier-qualifiers.html
-      if (support.ODBCdotTable && stream.match(/^[\w\d_$#]+/))
+      if (stream.match(/^[\w\d_$#]+/))
         return "variable-2";
     } else if (operatorChars.test(ch)) {
       // operators
@@ -75427,19 +75218,19 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     } else if (ch == '{' &&
         (stream.match(/^( )*(d|D|t|T|ts|TS)( )*'[^']*'( )*}/) || stream.match(/^( )*(d|D|t|T|ts|TS)( )*"[^"]*"( )*}/))) {
       // dates (weird ODBC syntax)
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/date-and-time-literals.html
       return "number";
     } else {
       stream.eatWhile(/^[_\w\d]/);
       var word = stream.current().toLowerCase();
       // dates (standard SQL syntax)
-      // ref: http://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html
+      // ref: https://dev.mysql.com/doc/refman/8.0/en/date-and-time-literals.html
       if (dateSQL.hasOwnProperty(word) && (stream.match(/^( )+'[^']*'/) || stream.match(/^( )+"[^"]*"/)))
         return "number";
       if (atoms.hasOwnProperty(word)) return "atom";
-      if (builtin.hasOwnProperty(word)) return "builtin";
+      if (builtin.hasOwnProperty(word)) return "type";
       if (keywords.hasOwnProperty(word)) return "keyword";
-      if (client.hasOwnProperty(word)) return "string-2";
+      if (client.hasOwnProperty(word)) return "builtin";
       return null;
     }
   }
@@ -75522,14 +75313,15 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     blockCommentStart: "/*",
     blockCommentEnd: "*/",
     lineComment: support.commentSlashSlash ? "//" : support.commentHash ? "#" : "--",
-    closeBrackets: "()[]{}''\"\"``"
+    closeBrackets: "()[]{}''\"\"``",
+    config: parserConfig
   };
 });
 
   // `identifier`
   function hookIdentifier(stream) {
     // MySQL/MariaDB identifiers
-    // ref: http://dev.mysql.com/doc/refman/5.6/en/identifier-qualifiers.html
+    // ref: https://dev.mysql.com/doc/refman/8.0/en/identifier-qualifiers.html
     var ch;
     while ((ch = stream.next()) != null) {
       if (ch == "`" && !stream.eat("`")) return "variable-2";
@@ -75556,7 +75348,7 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     // variables
     // @@prefix.varName @varName
     // varName can be quoted with ` or ' or "
-    // ref: http://dev.mysql.com/doc/refman/5.5/en/user-variables.html
+    // ref: https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
     if (stream.eat("@")) {
       stream.match('session.');
       stream.match('local.');
@@ -75581,12 +75373,12 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
   // short client keyword token
   function hookClient(stream) {
     // \N means NULL
-    // ref: http://dev.mysql.com/doc/refman/5.5/en/null-values.html
+    // ref: https://dev.mysql.com/doc/refman/8.0/en/null-values.html
     if (stream.eat("N")) {
         return "atom";
     }
     // \g, etc
-    // ref: http://dev.mysql.com/doc/refman/5.5/en/mysql-commands.html
+    // ref: https://dev.mysql.com/doc/refman/8.0/en/mysql-commands.html
     return stream.match(/^[a-zA-Z.#!?]/) ? "variable-2" : null;
   }
 
@@ -75602,14 +75394,14 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
 
   var defaultBuiltin = "bool boolean bit blob enum long longblob longtext medium mediumblob mediumint mediumtext time timestamp tinyblob tinyint tinytext text bigint int int1 int2 int3 int4 int8 integer float float4 float8 double char varbinary varchar varcharacter precision real date datetime year unsigned signed decimal numeric"
 
-  // A generic SQL Mode. It's not a standard, it just try to support what is generally supported
+  // A generic SQL Mode. It's not a standard, it just tries to support what is generally supported
   CodeMirror.defineMIME("text/x-sql", {
     name: "sql",
     keywords: set(sqlKeywords + "begin"),
     builtin: set(defaultBuiltin),
     atoms: set("false true null unknown"),
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable doubleQuote binaryNumber hexNumber")
+    support: set("doubleQuote binaryNumber hexNumber")
   });
 
   CodeMirror.defineMIME("text/x-mssql", {
@@ -75636,7 +75428,7 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     atoms: set("false true null unknown"),
     operatorChars: /^[*+\-%<>!=&|^]/,
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable decimallessFloat zerolessFloat binaryNumber hexNumber doubleQuote nCharCast charsetCast commentHash commentSpaceRequired"),
+    support: set("decimallessFloat zerolessFloat binaryNumber hexNumber doubleQuote nCharCast charsetCast commentHash commentSpaceRequired"),
     hooks: {
       "@":   hookVar,
       "`":   hookIdentifier,
@@ -75647,12 +75439,12 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
   CodeMirror.defineMIME("text/x-mariadb", {
     name: "sql",
     client: set("charset clear connect edit ego exit go help nopager notee nowarning pager print prompt quit rehash source status system tee"),
-    keywords: set(sqlKeywords + "accessible action add after algorithm all always analyze asensitive at authors auto_increment autocommit avg avg_row_length before binary binlog both btree cache call cascade cascaded case catalog_name chain change changed character check checkpoint checksum class_origin client_statistics close coalesce code collate collation collations column columns comment commit committed completion concurrent condition connection consistent constraint contains continue contributors convert cross current current_date current_time current_timestamp current_user cursor data database databases day_hour day_microsecond day_minute day_second deallocate dec declare default delay_key_write delayed delimiter des_key_file describe deterministic dev_pop dev_samp deviance diagnostics directory disable discard distinctrow div dual dumpfile each elseif enable enclosed end ends engine engines enum errors escape escaped even event events every execute exists exit explain extended fast fetch field fields first flush for force foreign found_rows full fulltext function general generated get global grant grants group groupby_concat handler hard hash help high_priority hosts hour_microsecond hour_minute hour_second if ignore ignore_server_ids import index index_statistics infile inner innodb inout insensitive insert_method install interval invoker isolation iterate key keys kill language last leading leave left level limit linear lines list load local localtime localtimestamp lock logs low_priority master master_heartbeat_period master_ssl_verify_server_cert masters match max max_rows maxvalue message_text middleint migrate min min_rows minute_microsecond minute_second mod mode modifies modify mutex mysql_errno natural next no no_write_to_binlog offline offset one online open optimize option optionally out outer outfile pack_keys parser partition partitions password persistent phase plugin plugins prepare preserve prev primary privileges procedure processlist profile profiles purge query quick range read read_write reads real rebuild recover references regexp relaylog release remove rename reorganize repair repeatable replace require resignal restrict resume return returns revoke right rlike rollback rollup row row_format rtree savepoint schedule schema schema_name schemas second_microsecond security sensitive separator serializable server session share show shutdown signal slave slow smallint snapshot soft soname spatial specific sql sql_big_result sql_buffer_result sql_cache sql_calc_found_rows sql_no_cache sql_small_result sqlexception sqlstate sqlwarning ssl start starting starts status std stddev stddev_pop stddev_samp storage straight_join subclass_origin sum suspend table_name table_statistics tables tablespace temporary terminated to trailing transaction trigger triggers truncate uncommitted undo uninstall unique unlock upgrade usage use use_frm user user_resources user_statistics using utc_date utc_time utc_timestamp value variables varying view views virtual warnings when while with work write xa xor year_month zerofill begin do then else loop repeat"),
+    keywords: set(sqlKeywords + "accessible action add after algorithm all always analyze asensitive at authors auto_increment autocommit avg avg_row_length before binary binlog both btree cache call cascade cascaded case catalog_name chain change changed character check checkpoint checksum class_origin client_statistics close coalesce code collate collation collations column columns comment commit committed completion concurrent condition connection consistent constraint contains continue contributors convert cross current current_date current_time current_timestamp current_user cursor data database databases day_hour day_microsecond day_minute day_second deallocate dec declare default delay_key_write delayed delimiter des_key_file describe deterministic dev_pop dev_samp deviance diagnostics directory disable discard distinctrow div dual dumpfile each elseif enable enclosed end ends engine engines enum errors escape escaped even event events every execute exists exit explain extended fast fetch field fields first flush for force foreign found_rows full fulltext function general generated get global grant grants group group_concat handler hard hash help high_priority hosts hour_microsecond hour_minute hour_second if ignore ignore_server_ids import index index_statistics infile inner innodb inout insensitive insert_method install interval invoker isolation iterate key keys kill language last leading leave left level limit linear lines list load local localtime localtimestamp lock logs low_priority master master_heartbeat_period master_ssl_verify_server_cert masters match max max_rows maxvalue message_text middleint migrate min min_rows minute_microsecond minute_second mod mode modifies modify mutex mysql_errno natural next no no_write_to_binlog offline offset one online open optimize option optionally out outer outfile pack_keys parser partition partitions password persistent phase plugin plugins prepare preserve prev primary privileges procedure processlist profile profiles purge query quick range read read_write reads real rebuild recover references regexp relaylog release remove rename reorganize repair repeatable replace require resignal restrict resume return returns revoke right rlike rollback rollup row row_format rtree savepoint schedule schema schema_name schemas second_microsecond security sensitive separator serializable server session share show shutdown signal slave slow smallint snapshot soft soname spatial specific sql sql_big_result sql_buffer_result sql_cache sql_calc_found_rows sql_no_cache sql_small_result sqlexception sqlstate sqlwarning ssl start starting starts status std stddev stddev_pop stddev_samp storage straight_join subclass_origin sum suspend table_name table_statistics tables tablespace temporary terminated to trailing transaction trigger triggers truncate uncommitted undo uninstall unique unlock upgrade usage use use_frm user user_resources user_statistics using utc_date utc_time utc_timestamp value variables varying view views virtual warnings when while with work write xa xor year_month zerofill begin do then else loop repeat"),
     builtin: set("bool boolean bit blob decimal double float long longblob longtext medium mediumblob mediumint mediumtext time timestamp tinyblob tinyint tinytext text bigint int int1 int2 int3 int4 int8 integer float float4 float8 double char varbinary varchar varcharacter precision date datetime year unsigned signed numeric"),
     atoms: set("false true null unknown"),
     operatorChars: /^[*+\-%<>!=&|^]/,
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable decimallessFloat zerolessFloat binaryNumber hexNumber doubleQuote nCharCast charsetCast commentHash commentSpaceRequired"),
+    support: set("decimallessFloat zerolessFloat binaryNumber hexNumber doubleQuote nCharCast charsetCast commentHash commentSpaceRequired"),
     hooks: {
       "@":   hookVar,
       "`":   hookIdentifier,
@@ -75723,7 +75515,7 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     atoms: set("false true null unknown"),
     operatorChars: /^[*+\-%<>!=]/,
     dateSQL: set("date timestamp"),
-    support: set("ODBCdotTable doubleQuote binaryNumber hexNumber")
+    support: set("doubleQuote binaryNumber hexNumber")
   });
 
   CodeMirror.defineMIME("text/x-pgsql", {
@@ -75733,12 +75525,12 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     // For pl/pgsql lang - https://github.com/postgres/postgres/blob/REL_11_2/src/pl/plpgsql/src/pl_scanner.c
     keywords: set(sqlKeywords + "a abort abs absent absolute access according action ada add admin after aggregate alias all allocate also alter always analyse analyze and any are array array_agg array_max_cardinality as asc asensitive assert assertion assignment asymmetric at atomic attach attribute attributes authorization avg backward base64 before begin begin_frame begin_partition bernoulli between bigint binary bit bit_length blob blocked bom boolean both breadth by c cache call called cardinality cascade cascaded case cast catalog catalog_name ceil ceiling chain char char_length character character_length character_set_catalog character_set_name character_set_schema characteristics characters check checkpoint class class_origin clob close cluster coalesce cobol collate collation collation_catalog collation_name collation_schema collect column column_name columns command_function command_function_code comment comments commit committed concurrently condition condition_number configuration conflict connect connection connection_name constant constraint constraint_catalog constraint_name constraint_schema constraints constructor contains content continue control conversion convert copy corr corresponding cost count covar_pop covar_samp create cross csv cube cume_dist current current_catalog current_date current_default_transform_group current_path current_role current_row current_schema current_time current_timestamp current_transform_group_for_type current_user cursor cursor_name cycle data database datalink datatype date datetime_interval_code datetime_interval_precision day db deallocate debug dec decimal declare default defaults deferrable deferred defined definer degree delete delimiter delimiters dense_rank depends depth deref derived desc describe descriptor detach detail deterministic diagnostics dictionary disable discard disconnect dispatch distinct dlnewcopy dlpreviouscopy dlurlcomplete dlurlcompleteonly dlurlcompletewrite dlurlpath dlurlpathonly dlurlpathwrite dlurlscheme dlurlserver dlvalue do document domain double drop dump dynamic dynamic_function dynamic_function_code each element else elseif elsif empty enable encoding encrypted end end_frame end_partition endexec enforced enum equals errcode error escape event every except exception exclude excluding exclusive exec execute exists exit exp explain expression extension external extract false family fetch file filter final first first_value flag float floor following for force foreach foreign fortran forward found frame_row free freeze from fs full function functions fusion g general generated get global go goto grant granted greatest group grouping groups handler having header hex hierarchy hint hold hour id identity if ignore ilike immediate immediately immutable implementation implicit import in include including increment indent index indexes indicator info inherit inherits initially inline inner inout input insensitive insert instance instantiable instead int integer integrity intersect intersection interval into invoker is isnull isolation join k key key_member key_type label lag language large last last_value lateral lead leading leakproof least left length level library like like_regex limit link listen ln load local localtime localtimestamp location locator lock locked log logged loop lower m map mapping match matched materialized max max_cardinality maxvalue member merge message message_length message_octet_length message_text method min minute minvalue mod mode modifies module month more move multiset mumps name names namespace national natural nchar nclob nesting new next nfc nfd nfkc nfkd nil no none normalize normalized not nothing notice notify notnull nowait nth_value ntile null nullable nullif nulls number numeric object occurrences_regex octet_length octets of off offset oids old on only open operator option options or order ordering ordinality others out outer output over overlaps overlay overriding owned owner p pad parallel parameter parameter_mode parameter_name parameter_ordinal_position parameter_specific_catalog parameter_specific_name parameter_specific_schema parser partial partition pascal passing passthrough password path percent percent_rank percentile_cont percentile_disc perform period permission pg_context pg_datatype_name pg_exception_context pg_exception_detail pg_exception_hint placing plans pli policy portion position position_regex power precedes preceding precision prepare prepared preserve primary print_strict_params prior privileges procedural procedure procedures program public publication query quote raise range rank read reads real reassign recheck recovery recursive ref references referencing refresh regr_avgx regr_avgy regr_count regr_intercept regr_r2 regr_slope regr_sxx regr_sxy regr_syy reindex relative release rename repeatable replace replica requiring reset respect restart restore restrict result result_oid return returned_cardinality returned_length returned_octet_length returned_sqlstate returning returns reverse revoke right role rollback rollup routine routine_catalog routine_name routine_schema routines row row_count row_number rows rowtype rule savepoint scale schema schema_name schemas scope scope_catalog scope_name scope_schema scroll search second section security select selective self sensitive sequence sequences serializable server server_name session session_user set setof sets share show similar simple size skip slice smallint snapshot some source space specific specific_name specifictype sql sqlcode sqlerror sqlexception sqlstate sqlwarning sqrt stable stacked standalone start state statement static statistics stddev_pop stddev_samp stdin stdout storage strict strip structure style subclass_origin submultiset subscription substring substring_regex succeeds sum symmetric sysid system system_time system_user t table table_name tables tablesample tablespace temp template temporary text then ties time timestamp timezone_hour timezone_minute to token top_level_count trailing transaction transaction_active transactions_committed transactions_rolled_back transform transforms translate translate_regex translation treat trigger trigger_catalog trigger_name trigger_schema trim trim_array true truncate trusted type types uescape unbounded uncommitted under unencrypted union unique unknown unlink unlisten unlogged unnamed unnest until untyped update upper uri usage use_column use_variable user user_defined_type_catalog user_defined_type_code user_defined_type_name user_defined_type_schema using vacuum valid validate validator value value_of values var_pop var_samp varbinary varchar variable_conflict variadic varying verbose version versioning view views volatile warning when whenever where while whitespace width_bucket window with within without work wrapper write xml xmlagg xmlattributes xmlbinary xmlcast xmlcomment xmlconcat xmldeclaration xmldocument xmlelement xmlexists xmlforest xmliterate xmlnamespaces xmlparse xmlpi xmlquery xmlroot xmlschema xmlserialize xmltable xmltext xmlvalidate year yes zone"),
     // https://www.postgresql.org/docs/11/datatype.html
-    builtin: set("bigint int8 bigserial serial8 bit varying varbit boolean bool box bytea character char varchar cidr circle date double precision float8 inet integer int int4 interval json jsonb line lseg macaddr macaddr8 money numeric decimal path pg_lsn point polygon real float4 smallint int2 smallserial serial2 serial serial4 text time without zone with timetz timestamp timestamptz tsquery tsvector txid_snapshot uuid xml"),
+    builtin: set("bigint int8 bigserial serial8 bit varying varbit boolean bool box bytea character char varchar cidr circle date double precision float8 inet integer int int4 interval json jsonb line lseg macaddr macaddr8 money numeric decimal path pg_lsn point polygon real float4 smallint int2 smallserial serial2 serial serial4 text time zone timetz timestamp timestamptz tsquery tsvector txid_snapshot uuid xml"),
     atoms: set("false true null unknown"),
     operatorChars: /^[*\/+\-%<>!=&|^\/#@?~]/,
     backslashStringEscapes: false,
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable decimallessFloat zerolessFloat binaryNumber hexNumber nCharCast charsetCast escapeConstant")
+    support: set("decimallessFloat zerolessFloat binaryNumber hexNumber nCharCast charsetCast escapeConstant")
   });
 
   // Google's SQL-like query language, GQL
@@ -75760,18 +75552,18 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     atoms: set("false true null unknown"),
     operatorChars: /^[*+\-%<>!=&|^\/#@?~]/,
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable decimallessFloat zerolessFloat binaryNumber hexNumber nCharCast charsetCast")
+    support: set("decimallessFloat zerolessFloat binaryNumber hexNumber nCharCast charsetCast")
   });
 
   // Spark SQL
   CodeMirror.defineMIME("text/x-sparksql", {
     name: "sql",
     keywords: set("add after all alter analyze and anti archive array as asc at between bucket buckets by cache cascade case cast change clear cluster clustered codegen collection column columns comment commit compact compactions compute concatenate cost create cross cube current current_date current_timestamp database databases data dbproperties defined delete delimited deny desc describe dfs directories distinct distribute drop else end escaped except exchange exists explain export extended external false fields fileformat first following for format formatted from full function functions global grant group grouping having if ignore import in index indexes inner inpath inputformat insert intersect interval into is items join keys last lateral lazy left like limit lines list load local location lock locks logical macro map minus msck natural no not null nulls of on optimize option options or order out outer outputformat over overwrite partition partitioned partitions percent preceding principals purge range recordreader recordwriter recover reduce refresh regexp rename repair replace reset restrict revoke right rlike role roles rollback rollup row rows schema schemas select semi separated serde serdeproperties set sets show skewed sort sorted start statistics stored stratify struct table tables tablesample tblproperties temp temporary terminated then to touch transaction transactions transform true truncate unarchive unbounded uncache union unlock unset use using values view when where window with"),
-    builtin: set("tinyint smallint int bigint boolean float double string binary timestamp decimal array map struct uniontype delimited serde sequencefile textfile rcfile inputformat outputformat"),
+    builtin: set("abs acos acosh add_months aggregate and any approx_count_distinct approx_percentile array array_contains array_distinct array_except array_intersect array_join array_max array_min array_position array_remove array_repeat array_sort array_union arrays_overlap arrays_zip ascii asin asinh assert_true atan atan2 atanh avg base64 between bigint bin binary bit_and bit_count bit_get bit_length bit_or bit_xor bool_and bool_or boolean bround btrim cardinality case cast cbrt ceil ceiling char char_length character_length chr coalesce collect_list collect_set concat concat_ws conv corr cos cosh cot count count_if count_min_sketch covar_pop covar_samp crc32 cume_dist current_catalog current_database current_date current_timestamp current_timezone current_user date date_add date_format date_from_unix_date date_part date_sub date_trunc datediff day dayofmonth dayofweek dayofyear decimal decode degrees delimited dense_rank div double e element_at elt encode every exists exp explode explode_outer expm1 extract factorial filter find_in_set first first_value flatten float floor forall format_number format_string from_csv from_json from_unixtime from_utc_timestamp get_json_object getbit greatest grouping grouping_id hash hex hour hypot if ifnull in initcap inline inline_outer input_file_block_length input_file_block_start input_file_name inputformat instr int isnan isnotnull isnull java_method json_array_length json_object_keys json_tuple kurtosis lag last last_day last_value lcase lead least left length levenshtein like ln locate log log10 log1p log2 lower lpad ltrim make_date make_dt_interval make_interval make_timestamp make_ym_interval map map_concat map_entries map_filter map_from_arrays map_from_entries map_keys map_values map_zip_with max max_by md5 mean min min_by minute mod monotonically_increasing_id month months_between named_struct nanvl negative next_day not now nth_value ntile nullif nvl nvl2 octet_length or outputformat overlay parse_url percent_rank percentile percentile_approx pi pmod posexplode posexplode_outer position positive pow power printf quarter radians raise_error rand randn random rank rcfile reflect regexp regexp_extract regexp_extract_all regexp_like regexp_replace repeat replace reverse right rint rlike round row_number rpad rtrim schema_of_csv schema_of_json second sentences sequence sequencefile serde session_window sha sha1 sha2 shiftleft shiftright shiftrightunsigned shuffle sign signum sin sinh size skewness slice smallint some sort_array soundex space spark_partition_id split sqrt stack std stddev stddev_pop stddev_samp str_to_map string struct substr substring substring_index sum tan tanh textfile timestamp timestamp_micros timestamp_millis timestamp_seconds tinyint to_csv to_date to_json to_timestamp to_unix_timestamp to_utc_timestamp transform transform_keys transform_values translate trim trunc try_add try_divide typeof ucase unbase64 unhex uniontype unix_date unix_micros unix_millis unix_seconds unix_timestamp upper uuid var_pop var_samp variance version weekday weekofyear when width_bucket window xpath xpath_boolean xpath_double xpath_float xpath_int xpath_long xpath_number xpath_short xpath_string xxhash64 year zip_with"),
     atoms: set("false true null"),
     operatorChars: /^[*\/+\-%<>!=~&|^]/,
     dateSQL: set("date time timestamp"),
-    support: set("ODBCdotTable doubleQuote zerolessFloat")
+    support: set("doubleQuote zerolessFloat")
   });
 
   // Esper
@@ -75785,6 +75577,26 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     operatorChars: /^[*+\-%<>!=&|^\/#@?~]/,
     dateSQL: set("time"),
     support: set("decimallessFloat zerolessFloat binaryNumber hexNumber")
+  });
+
+  // Trino (formerly known as Presto)
+  CodeMirror.defineMIME("text/x-trino", {
+    name: "sql",
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/core/trino-parser/src/main/antlr4/io/trino/sql/parser/SqlBase.g4#L859-L1129
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/docs/src/main/sphinx/functions/list.rst
+    keywords: set("abs absent acos add admin after all all_match alter analyze and any any_match approx_distinct approx_most_frequent approx_percentile approx_set arbitrary array_agg array_distinct array_except array_intersect array_join array_max array_min array_position array_remove array_sort array_union arrays_overlap as asc asin at at_timezone atan atan2 authorization avg bar bernoulli beta_cdf between bing_tile bing_tile_at bing_tile_coordinates bing_tile_polygon bing_tile_quadkey bing_tile_zoom_level bing_tiles_around bit_count bitwise_and bitwise_and_agg bitwise_left_shift bitwise_not bitwise_or bitwise_or_agg bitwise_right_shift bitwise_right_shift_arithmetic bitwise_xor bool_and bool_or both by call cardinality cascade case cast catalogs cbrt ceil ceiling char2hexint checksum chr classify coalesce codepoint column columns combinations comment commit committed concat concat_ws conditional constraint contains contains_sequence convex_hull_agg copartition corr cos cosh cosine_similarity count count_if covar_pop covar_samp crc32 create cross cube cume_dist current current_catalog current_date current_groups current_path current_role current_schema current_time current_timestamp current_timezone current_user data date_add date_diff date_format date_parse date_trunc day day_of_month day_of_week day_of_year deallocate default define definer degrees delete dense_rank deny desc describe descriptor distinct distributed dow doy drop e element_at else empty empty_approx_set encoding end error escape evaluate_classifier_predictions every except excluding execute exists exp explain extract false features fetch filter final first first_value flatten floor following for format format_datetime format_number from from_base from_base32 from_base64 from_base64url from_big_endian_32 from_big_endian_64 from_encoded_polyline from_geojson_geometry from_hex from_ieee754_32 from_ieee754_64 from_iso8601_date from_iso8601_timestamp from_iso8601_timestamp_nanos from_unixtime from_unixtime_nanos from_utf8 full functions geometric_mean geometry_from_hadoop_shape geometry_invalid_reason geometry_nearest_points geometry_to_bing_tiles geometry_union geometry_union_agg grant granted grants graphviz great_circle_distance greatest group grouping groups hamming_distance hash_counts having histogram hmac_md5 hmac_sha1 hmac_sha256 hmac_sha512 hour human_readable_seconds if ignore in including index infinity initial inner input insert intersect intersection_cardinality into inverse_beta_cdf inverse_normal_cdf invoker io is is_finite is_infinite is_json_scalar is_nan isolation jaccard_index join json_array json_array_contains json_array_get json_array_length json_exists json_extract json_extract_scalar json_format json_object json_parse json_query json_size json_value keep key keys kurtosis lag last last_day_of_month last_value lateral lead leading learn_classifier learn_libsvm_classifier learn_libsvm_regressor learn_regressor least left length level levenshtein_distance like limit line_interpolate_point line_interpolate_points line_locate_point listagg ln local localtime localtimestamp log log10 log2 logical lower lpad ltrim luhn_check make_set_digest map_agg map_concat map_entries map_filter map_from_entries map_keys map_union map_values map_zip_with match match_recognize matched matches materialized max max_by md5 measures merge merge_set_digest millisecond min min_by minute mod month multimap_agg multimap_from_entries murmur3 nan natural next nfc nfd nfkc nfkd ngrams no none none_match normal_cdf normalize not now nth_value ntile null nullif nulls numeric_histogram object objectid_timestamp of offset omit on one only option or order ordinality outer output over overflow parse_data_size parse_datetime parse_duration partition partitions passing past path pattern per percent_rank permute pi position pow power preceding prepare privileges properties prune qdigest_agg quarter quotes radians rand random range rank read recursive reduce reduce_agg refresh regexp_count regexp_extract regexp_extract_all regexp_like regexp_position regexp_replace regexp_split regr_intercept regr_slope regress rename render repeat repeatable replace reset respect restrict returning reverse revoke rgb right role roles rollback rollup round row_number rows rpad rtrim running scalar schema schemas second security seek select sequence serializable session set sets sha1 sha256 sha512 show shuffle sign simplify_geometry sin skewness skip slice some soundex spatial_partitioning spatial_partitions split split_part split_to_map split_to_multimap spooky_hash_v2_32 spooky_hash_v2_64 sqrt st_area st_asbinary st_astext st_boundary st_buffer st_centroid st_contains st_convexhull st_coorddim st_crosses st_difference st_dimension st_disjoint st_distance st_endpoint st_envelope st_envelopeaspts st_equals st_exteriorring st_geometries st_geometryfromtext st_geometryn st_geometrytype st_geomfrombinary st_interiorringn st_interiorrings st_intersection st_intersects st_isclosed st_isempty st_isring st_issimple st_isvalid st_length st_linefromtext st_linestring st_multipoint st_numgeometries st_numinteriorring st_numpoints st_overlaps st_point st_pointn st_points st_polygon st_relate st_startpoint st_symdifference st_touches st_union st_within st_x st_xmax st_xmin st_y st_ymax st_ymin start starts_with stats stddev stddev_pop stddev_samp string strpos subset substr substring sum system table tables tablesample tan tanh tdigest_agg text then ties timestamp_objectid timezone_hour timezone_minute to to_base to_base32 to_base64 to_base64url to_big_endian_32 to_big_endian_64 to_char to_date to_encoded_polyline to_geojson_geometry to_geometry to_hex to_ieee754_32 to_ieee754_64 to_iso8601 to_milliseconds to_spherical_geography to_timestamp to_unixtime to_utf8 trailing transaction transform transform_keys transform_values translate trim trim_array true truncate try try_cast type typeof uescape unbounded uncommitted unconditional union unique unknown unmatched unnest update upper url_decode url_encode url_extract_fragment url_extract_host url_extract_parameter url_extract_path url_extract_port url_extract_protocol url_extract_query use user using utf16 utf32 utf8 validate value value_at_quantile values values_at_quantiles var_pop var_samp variance verbose version view week week_of_year when where width_bucket wilson_interval_lower wilson_interval_upper window with with_timezone within without word_stem work wrapper write xxhash64 year year_of_week yow zip zip_with"),
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/core/trino-main/src/main/java/io/trino/metadata/TypeRegistry.java#L131-L168
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/plugin/trino-ml/src/main/java/io/trino/plugin/ml/MLPlugin.java#L35
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/plugin/trino-mongodb/src/main/java/io/trino/plugin/mongodb/MongoPlugin.java#L32
+    // https://github.com/trinodb/trino/blob/bc7a4eeedde28684c7ae6f74cefcaf7c6e782174/plugin/trino-geospatial/src/main/java/io/trino/plugin/geospatial/GeoPlugin.java#L37
+    builtin: set("array bigint bingtile boolean char codepoints color date decimal double function geometry hyperloglog int integer interval ipaddress joniregexp json json2016 jsonpath kdbtree likepattern map model objectid p4hyperloglog precision qdigest re2jregexp real regressor row setdigest smallint sphericalgeography tdigest time timestamp tinyint uuid varbinary varchar zone"),
+    atoms: set("false true null unknown"),
+    // https://trino.io/docs/current/functions/list.html#id1
+    operatorChars: /^[[\]|<>=!\-+*/%]/,
+    dateSQL: set("date time timestamp zone"),
+    // hexNumber is necessary for VARBINARY literals, e.g. X'65683F'
+    // but it also enables 0xFF hex numbers, which Trino doesn't support.
+    support: set("decimallessFloat zerolessFloat hexNumber")
   });
 });
 
@@ -75802,9 +75614,12 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
     Commands parsed and executed by the client (not the server).
   support:
     A list of supported syntaxes which are not common, but are supported by more than 1 DBMS.
-    * ODBCdotTable: .tableName
     * zerolessFloat: .1
-    * doubleQuote
+    * decimallessFloat: 1.
+    * hexNumber: X'01AF' X'01af' x'01AF' x'01af' 0x01AF 0x01af
+    * binaryNumber: b'01' B'01' 0b01
+    * doubleQuote: "string"
+    * escapeConstant: E''
     * nCharCast: N'string'
     * charsetCast: _utf8'string'
     * commentHash: use # char for comments
@@ -75823,7 +75638,7 @@ CodeMirror.defineMode("sql", function(config, parserConfig) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -75850,7 +75665,7 @@ var keywordList = [
   "require_relative", "extend", "autoload", "__END__", "__FILE__", "__LINE__", "__dir__"
 ], keywords = wordObj(keywordList);
 
-var indentWords = wordObj(["def", "class", "case", "for", "while", "until", "module", "then",
+var indentWords = wordObj(["def", "class", "case", "for", "while", "until", "module",
                            "catch", "loop", "proc", "begin"]);
 var dedentWords = wordObj(["end", "until"]);
 var opening = {"[": "]", "{": "}", "(": ")"};
@@ -76132,7 +75947,7 @@ CodeMirror.registerHelper("hintWords", "ruby", keywordList);
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -76306,7 +76121,7 @@ CodeMirror.defineMIME('application/x-sh', 'shell');
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function (mod) {
   if (true) // CommonJS
@@ -76384,7 +76199,7 @@ CodeMirror.defineMIME('application/x-sh', 'shell');
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -76568,7 +76383,7 @@ CodeMirror.defineMIME("text/x-nginx-conf", "nginx");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function (mod) {
   "use strict";
@@ -76651,7 +76466,7 @@ CodeMirror.defineMIME("text/x-nginx-conf", "nginx");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 // Utility function that allows modes to be combined. The mode given
 // as the base argument takes care of most of the normal mode
@@ -76747,7 +76562,7 @@ CodeMirror.overlayMode = function(base, overlay, combine) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 /**
  * Link to the project's GitHub page:
@@ -77112,7 +76927,7 @@ CodeMirror.defineMIME("text/coffeescript", "coffeescript");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 // Stylus mode created by Dmitry Kiselyov http://git.io/AaRB
 
@@ -77850,12 +77665,12 @@ CodeMirror.defineMIME("text/coffeescript", "coffeescript");
   // Note, "url-prefix" should precede "url" in order to match correctly in documentTypesRegexp
   var documentTypes_ = ["domain", "regexp", "url-prefix", "url"];
   var mediaTypes_ = ["all","aural","braille","handheld","print","projection","screen","tty","tv","embossed"];
-  var mediaFeatures_ = ["width","min-width","max-width","height","min-height","max-height","device-width","min-device-width","max-device-width","device-height","min-device-height","max-device-height","aspect-ratio","min-aspect-ratio","max-aspect-ratio","device-aspect-ratio","min-device-aspect-ratio","max-device-aspect-ratio","color","min-color","max-color","color-index","min-color-index","max-color-index","monochrome","min-monochrome","max-monochrome","resolution","min-resolution","max-resolution","scan","grid"];
+  var mediaFeatures_ = ["width","min-width","max-width","height","min-height","max-height","device-width","min-device-width","max-device-width","device-height","min-device-height","max-device-height","aspect-ratio","min-aspect-ratio","max-aspect-ratio","device-aspect-ratio","min-device-aspect-ratio","max-device-aspect-ratio","color","min-color","max-color","color-index","min-color-index","max-color-index","monochrome","min-monochrome","max-monochrome","resolution","min-resolution","max-resolution","scan","grid","dynamic-range","video-dynamic-range"];
   var propertyKeywords_ = ["align-content","align-items","align-self","alignment-adjust","alignment-baseline","anchor-point","animation","animation-delay","animation-direction","animation-duration","animation-fill-mode","animation-iteration-count","animation-name","animation-play-state","animation-timing-function","appearance","azimuth","backface-visibility","background","background-attachment","background-clip","background-color","background-image","background-origin","background-position","background-repeat","background-size","baseline-shift","binding","bleed","bookmark-label","bookmark-level","bookmark-state","bookmark-target","border","border-bottom","border-bottom-color","border-bottom-left-radius","border-bottom-right-radius","border-bottom-style","border-bottom-width","border-collapse","border-color","border-image","border-image-outset","border-image-repeat","border-image-slice","border-image-source","border-image-width","border-left","border-left-color","border-left-style","border-left-width","border-radius","border-right","border-right-color","border-right-style","border-right-width","border-spacing","border-style","border-top","border-top-color","border-top-left-radius","border-top-right-radius","border-top-style","border-top-width","border-width","bottom","box-decoration-break","box-shadow","box-sizing","break-after","break-before","break-inside","caption-side","clear","clip","color","color-profile","column-count","column-fill","column-gap","column-rule","column-rule-color","column-rule-style","column-rule-width","column-span","column-width","columns","content","counter-increment","counter-reset","crop","cue","cue-after","cue-before","cursor","direction","display","dominant-baseline","drop-initial-after-adjust","drop-initial-after-align","drop-initial-before-adjust","drop-initial-before-align","drop-initial-size","drop-initial-value","elevation","empty-cells","fit","fit-position","flex","flex-basis","flex-direction","flex-flow","flex-grow","flex-shrink","flex-wrap","float","float-offset","flow-from","flow-into","font","font-feature-settings","font-family","font-kerning","font-language-override","font-size","font-size-adjust","font-stretch","font-style","font-synthesis","font-variant","font-variant-alternates","font-variant-caps","font-variant-east-asian","font-variant-ligatures","font-variant-numeric","font-variant-position","font-weight","grid","grid-area","grid-auto-columns","grid-auto-flow","grid-auto-position","grid-auto-rows","grid-column","grid-column-end","grid-column-start","grid-row","grid-row-end","grid-row-start","grid-template","grid-template-areas","grid-template-columns","grid-template-rows","hanging-punctuation","height","hyphens","icon","image-orientation","image-rendering","image-resolution","inline-box-align","justify-content","left","letter-spacing","line-break","line-height","line-stacking","line-stacking-ruby","line-stacking-shift","line-stacking-strategy","list-style","list-style-image","list-style-position","list-style-type","margin","margin-bottom","margin-left","margin-right","margin-top","marker-offset","marks","marquee-direction","marquee-loop","marquee-play-count","marquee-speed","marquee-style","max-height","max-width","min-height","min-width","move-to","nav-down","nav-index","nav-left","nav-right","nav-up","object-fit","object-position","opacity","order","orphans","outline","outline-color","outline-offset","outline-style","outline-width","overflow","overflow-style","overflow-wrap","overflow-x","overflow-y","padding","padding-bottom","padding-left","padding-right","padding-top","page","page-break-after","page-break-before","page-break-inside","page-policy","pause","pause-after","pause-before","perspective","perspective-origin","pitch","pitch-range","play-during","position","presentation-level","punctuation-trim","quotes","region-break-after","region-break-before","region-break-inside","region-fragment","rendering-intent","resize","rest","rest-after","rest-before","richness","right","rotation","rotation-point","ruby-align","ruby-overhang","ruby-position","ruby-span","shape-image-threshold","shape-inside","shape-margin","shape-outside","size","speak","speak-as","speak-header","speak-numeral","speak-punctuation","speech-rate","stress","string-set","tab-size","table-layout","target","target-name","target-new","target-position","text-align","text-align-last","text-decoration","text-decoration-color","text-decoration-line","text-decoration-skip","text-decoration-style","text-emphasis","text-emphasis-color","text-emphasis-position","text-emphasis-style","text-height","text-indent","text-justify","text-outline","text-overflow","text-shadow","text-size-adjust","text-space-collapse","text-transform","text-underline-position","text-wrap","top","transform","transform-origin","transform-style","transition","transition-delay","transition-duration","transition-property","transition-timing-function","unicode-bidi","vertical-align","visibility","voice-balance","voice-duration","voice-family","voice-pitch","voice-range","voice-rate","voice-stress","voice-volume","volume","white-space","widows","width","will-change","word-break","word-spacing","word-wrap","z-index","clip-path","clip-rule","mask","enable-background","filter","flood-color","flood-opacity","lighting-color","stop-color","stop-opacity","pointer-events","color-interpolation","color-interpolation-filters","color-rendering","fill","fill-opacity","fill-rule","image-rendering","marker","marker-end","marker-mid","marker-start","shape-rendering","stroke","stroke-dasharray","stroke-dashoffset","stroke-linecap","stroke-linejoin","stroke-miterlimit","stroke-opacity","stroke-width","text-rendering","baseline-shift","dominant-baseline","glyph-orientation-horizontal","glyph-orientation-vertical","text-anchor","writing-mode","font-smoothing","osx-font-smoothing"];
   var nonStandardPropertyKeywords_ = ["scrollbar-arrow-color","scrollbar-base-color","scrollbar-dark-shadow-color","scrollbar-face-color","scrollbar-highlight-color","scrollbar-shadow-color","scrollbar-3d-light-color","scrollbar-track-color","shape-inside","searchfield-cancel-button","searchfield-decoration","searchfield-results-button","searchfield-results-decoration","zoom"];
   var fontProperties_ = ["font-family","src","unicode-range","font-variant","font-feature-settings","font-stretch","font-weight","font-style"];
   var colorKeywords_ = ["aliceblue","antiquewhite","aqua","aquamarine","azure","beige","bisque","black","blanchedalmond","blue","blueviolet","brown","burlywood","cadetblue","chartreuse","chocolate","coral","cornflowerblue","cornsilk","crimson","cyan","darkblue","darkcyan","darkgoldenrod","darkgray","darkgreen","darkkhaki","darkmagenta","darkolivegreen","darkorange","darkorchid","darkred","darksalmon","darkseagreen","darkslateblue","darkslategray","darkturquoise","darkviolet","deeppink","deepskyblue","dimgray","dodgerblue","firebrick","floralwhite","forestgreen","fuchsia","gainsboro","ghostwhite","gold","goldenrod","gray","grey","green","greenyellow","honeydew","hotpink","indianred","indigo","ivory","khaki","lavender","lavenderblush","lawngreen","lemonchiffon","lightblue","lightcoral","lightcyan","lightgoldenrodyellow","lightgray","lightgreen","lightpink","lightsalmon","lightseagreen","lightskyblue","lightslategray","lightsteelblue","lightyellow","lime","limegreen","linen","magenta","maroon","mediumaquamarine","mediumblue","mediumorchid","mediumpurple","mediumseagreen","mediumslateblue","mediumspringgreen","mediumturquoise","mediumvioletred","midnightblue","mintcream","mistyrose","moccasin","navajowhite","navy","oldlace","olive","olivedrab","orange","orangered","orchid","palegoldenrod","palegreen","paleturquoise","palevioletred","papayawhip","peachpuff","peru","pink","plum","powderblue","purple","rebeccapurple","red","rosybrown","royalblue","saddlebrown","salmon","sandybrown","seagreen","seashell","sienna","silver","skyblue","slateblue","slategray","snow","springgreen","steelblue","tan","teal","thistle","tomato","turquoise","violet","wheat","white","whitesmoke","yellow","yellowgreen"];
-  var valueKeywords_ = ["above","absolute","activeborder","additive","activecaption","afar","after-white-space","ahead","alias","all","all-scroll","alphabetic","alternate","always","amharic","amharic-abegede","antialiased","appworkspace","arabic-indic","armenian","asterisks","attr","auto","avoid","avoid-column","avoid-page","avoid-region","background","backwards","baseline","below","bidi-override","binary","bengali","blink","block","block-axis","bold","bolder","border","border-box","both","bottom","break","break-all","break-word","bullets","button","button-bevel","buttonface","buttonhighlight","buttonshadow","buttontext","calc","cambodian","capitalize","caps-lock-indicator","caption","captiontext","caret","cell","center","checkbox","circle","cjk-decimal","cjk-earthly-branch","cjk-heavenly-stem","cjk-ideographic","clear","clip","close-quote","col-resize","collapse","column","compact","condensed","contain","content","contents","content-box","context-menu","continuous","copy","counter","counters","cover","crop","cross","crosshair","currentcolor","cursive","cyclic","dashed","decimal","decimal-leading-zero","default","default-button","destination-atop","destination-in","destination-out","destination-over","devanagari","disc","discard","disclosure-closed","disclosure-open","document","dot-dash","dot-dot-dash","dotted","double","down","e-resize","ease","ease-in","ease-in-out","ease-out","element","ellipse","ellipsis","embed","end","ethiopic","ethiopic-abegede","ethiopic-abegede-am-et","ethiopic-abegede-gez","ethiopic-abegede-ti-er","ethiopic-abegede-ti-et","ethiopic-halehame-aa-er","ethiopic-halehame-aa-et","ethiopic-halehame-am-et","ethiopic-halehame-gez","ethiopic-halehame-om-et","ethiopic-halehame-sid-et","ethiopic-halehame-so-et","ethiopic-halehame-ti-er","ethiopic-halehame-ti-et","ethiopic-halehame-tig","ethiopic-numeric","ew-resize","expanded","extends","extra-condensed","extra-expanded","fantasy","fast","fill","fixed","flat","flex","footnotes","forwards","from","geometricPrecision","georgian","graytext","groove","gujarati","gurmukhi","hand","hangul","hangul-consonant","hebrew","help","hidden","hide","higher","highlight","highlighttext","hiragana","hiragana-iroha","horizontal","hsl","hsla","icon","ignore","inactiveborder","inactivecaption","inactivecaptiontext","infinite","infobackground","infotext","inherit","initial","inline","inline-axis","inline-block","inline-flex","inline-table","inset","inside","intrinsic","invert","italic","japanese-formal","japanese-informal","justify","kannada","katakana","katakana-iroha","keep-all","khmer","korean-hangul-formal","korean-hanja-formal","korean-hanja-informal","landscape","lao","large","larger","left","level","lighter","line-through","linear","linear-gradient","lines","list-item","listbox","listitem","local","logical","loud","lower","lower-alpha","lower-armenian","lower-greek","lower-hexadecimal","lower-latin","lower-norwegian","lower-roman","lowercase","ltr","malayalam","match","matrix","matrix3d","media-controls-background","media-current-time-display","media-fullscreen-button","media-mute-button","media-play-button","media-return-to-realtime-button","media-rewind-button","media-seek-back-button","media-seek-forward-button","media-slider","media-sliderthumb","media-time-remaining-display","media-volume-slider","media-volume-slider-container","media-volume-sliderthumb","medium","menu","menulist","menulist-button","menulist-text","menulist-textfield","menutext","message-box","middle","min-intrinsic","mix","mongolian","monospace","move","multiple","myanmar","n-resize","narrower","ne-resize","nesw-resize","no-close-quote","no-drop","no-open-quote","no-repeat","none","normal","not-allowed","nowrap","ns-resize","numbers","numeric","nw-resize","nwse-resize","oblique","octal","open-quote","optimizeLegibility","optimizeSpeed","oriya","oromo","outset","outside","outside-shape","overlay","overline","padding","padding-box","painted","page","paused","persian","perspective","plus-darker","plus-lighter","pointer","polygon","portrait","pre","pre-line","pre-wrap","preserve-3d","progress","push-button","radial-gradient","radio","read-only","read-write","read-write-plaintext-only","rectangle","region","relative","repeat","repeating-linear-gradient","repeating-radial-gradient","repeat-x","repeat-y","reset","reverse","rgb","rgba","ridge","right","rotate","rotate3d","rotateX","rotateY","rotateZ","round","row-resize","rtl","run-in","running","s-resize","sans-serif","scale","scale3d","scaleX","scaleY","scaleZ","scroll","scrollbar","scroll-position","se-resize","searchfield","searchfield-cancel-button","searchfield-decoration","searchfield-results-button","searchfield-results-decoration","semi-condensed","semi-expanded","separate","serif","show","sidama","simp-chinese-formal","simp-chinese-informal","single","skew","skewX","skewY","skip-white-space","slide","slider-horizontal","slider-vertical","sliderthumb-horizontal","sliderthumb-vertical","slow","small","small-caps","small-caption","smaller","solid","somali","source-atop","source-in","source-out","source-over","space","spell-out","square","square-button","start","static","status-bar","stretch","stroke","sub","subpixel-antialiased","super","sw-resize","symbolic","symbols","table","table-caption","table-cell","table-column","table-column-group","table-footer-group","table-header-group","table-row","table-row-group","tamil","telugu","text","text-bottom","text-top","textarea","textfield","thai","thick","thin","threeddarkshadow","threedface","threedhighlight","threedlightshadow","threedshadow","tibetan","tigre","tigrinya-er","tigrinya-er-abegede","tigrinya-et","tigrinya-et-abegede","to","top","trad-chinese-formal","trad-chinese-informal","translate","translate3d","translateX","translateY","translateZ","transparent","ultra-condensed","ultra-expanded","underline","up","upper-alpha","upper-armenian","upper-greek","upper-hexadecimal","upper-latin","upper-norwegian","upper-roman","uppercase","urdu","url","var","vertical","vertical-text","visible","visibleFill","visiblePainted","visibleStroke","visual","w-resize","wait","wave","wider","window","windowframe","windowtext","words","x-large","x-small","xor","xx-large","xx-small","bicubic","optimizespeed","grayscale","row","row-reverse","wrap","wrap-reverse","column-reverse","flex-start","flex-end","space-between","space-around", "unset"];
+  var valueKeywords_ = ["above","absolute","activeborder","additive","activecaption","afar","after-white-space","ahead","alias","all","all-scroll","alphabetic","alternate","always","amharic","amharic-abegede","antialiased","appworkspace","arabic-indic","armenian","asterisks","attr","auto","avoid","avoid-column","avoid-page","avoid-region","background","backwards","baseline","below","bidi-override","binary","bengali","blink","block","block-axis","bold","bolder","border","border-box","both","bottom","break","break-all","break-word","bullets","button","buttonface","buttonhighlight","buttonshadow","buttontext","calc","cambodian","capitalize","caps-lock-indicator","caption","captiontext","caret","cell","center","checkbox","circle","cjk-decimal","cjk-earthly-branch","cjk-heavenly-stem","cjk-ideographic","clear","clip","close-quote","col-resize","collapse","column","compact","condensed","conic-gradient","contain","content","contents","content-box","context-menu","continuous","copy","counter","counters","cover","crop","cross","crosshair","currentcolor","cursive","cyclic","dashed","decimal","decimal-leading-zero","default","default-button","destination-atop","destination-in","destination-out","destination-over","devanagari","disc","discard","disclosure-closed","disclosure-open","document","dot-dash","dot-dot-dash","dotted","double","down","e-resize","ease","ease-in","ease-in-out","ease-out","element","ellipse","ellipsis","embed","end","ethiopic","ethiopic-abegede","ethiopic-abegede-am-et","ethiopic-abegede-gez","ethiopic-abegede-ti-er","ethiopic-abegede-ti-et","ethiopic-halehame-aa-er","ethiopic-halehame-aa-et","ethiopic-halehame-am-et","ethiopic-halehame-gez","ethiopic-halehame-om-et","ethiopic-halehame-sid-et","ethiopic-halehame-so-et","ethiopic-halehame-ti-er","ethiopic-halehame-ti-et","ethiopic-halehame-tig","ethiopic-numeric","ew-resize","expanded","extends","extra-condensed","extra-expanded","fantasy","fast","fill","fixed","flat","flex","footnotes","forwards","from","geometricPrecision","georgian","graytext","groove","gujarati","gurmukhi","hand","hangul","hangul-consonant","hebrew","help","hidden","hide","high","higher","highlight","highlighttext","hiragana","hiragana-iroha","horizontal","hsl","hsla","icon","ignore","inactiveborder","inactivecaption","inactivecaptiontext","infinite","infobackground","infotext","inherit","initial","inline","inline-axis","inline-block","inline-flex","inline-table","inset","inside","intrinsic","invert","italic","japanese-formal","japanese-informal","justify","kannada","katakana","katakana-iroha","keep-all","khmer","korean-hangul-formal","korean-hanja-formal","korean-hanja-informal","landscape","lao","large","larger","left","level","lighter","line-through","linear","linear-gradient","lines","list-item","listbox","listitem","local","logical","loud","lower","lower-alpha","lower-armenian","lower-greek","lower-hexadecimal","lower-latin","lower-norwegian","lower-roman","lowercase","ltr","malayalam","match","matrix","matrix3d","media-play-button","media-slider","media-sliderthumb","media-volume-slider","media-volume-sliderthumb","medium","menu","menulist","menulist-button","menutext","message-box","middle","min-intrinsic","mix","mongolian","monospace","move","multiple","myanmar","n-resize","narrower","ne-resize","nesw-resize","no-close-quote","no-drop","no-open-quote","no-repeat","none","normal","not-allowed","nowrap","ns-resize","numbers","numeric","nw-resize","nwse-resize","oblique","octal","open-quote","optimizeLegibility","optimizeSpeed","oriya","oromo","outset","outside","outside-shape","overlay","overline","padding","padding-box","painted","page","paused","persian","perspective","plus-darker","plus-lighter","pointer","polygon","portrait","pre","pre-line","pre-wrap","preserve-3d","progress","push-button","radial-gradient","radio","read-only","read-write","read-write-plaintext-only","rectangle","region","relative","repeat","repeating-linear-gradient","repeating-radial-gradient","repeating-conic-gradient","repeat-x","repeat-y","reset","reverse","rgb","rgba","ridge","right","rotate","rotate3d","rotateX","rotateY","rotateZ","round","row-resize","rtl","run-in","running","s-resize","sans-serif","scale","scale3d","scaleX","scaleY","scaleZ","scroll","scrollbar","scroll-position","se-resize","searchfield","searchfield-cancel-button","searchfield-decoration","searchfield-results-button","searchfield-results-decoration","semi-condensed","semi-expanded","separate","serif","show","sidama","simp-chinese-formal","simp-chinese-informal","single","skew","skewX","skewY","skip-white-space","slide","slider-horizontal","slider-vertical","sliderthumb-horizontal","sliderthumb-vertical","slow","small","small-caps","small-caption","smaller","solid","somali","source-atop","source-in","source-out","source-over","space","spell-out","square","square-button","standard","start","static","status-bar","stretch","stroke","sub","subpixel-antialiased","super","sw-resize","symbolic","symbols","table","table-caption","table-cell","table-column","table-column-group","table-footer-group","table-header-group","table-row","table-row-group","tamil","telugu","text","text-bottom","text-top","textarea","textfield","thai","thick","thin","threeddarkshadow","threedface","threedhighlight","threedlightshadow","threedshadow","tibetan","tigre","tigrinya-er","tigrinya-er-abegede","tigrinya-et","tigrinya-et-abegede","to","top","trad-chinese-formal","trad-chinese-informal","translate","translate3d","translateX","translateY","translateZ","transparent","ultra-condensed","ultra-expanded","underline","up","upper-alpha","upper-armenian","upper-greek","upper-hexadecimal","upper-latin","upper-norwegian","upper-roman","uppercase","urdu","url","var","vertical","vertical-text","visible","visibleFill","visiblePainted","visibleStroke","visual","w-resize","wait","wave","wider","window","windowframe","windowtext","words","x-large","x-small","xor","xx-large","xx-small","bicubic","optimizespeed","grayscale","row","row-reverse","wrap","wrap-reverse","column-reverse","flex-start","flex-end","space-between","space-around", "unset"];
 
   var wordOperatorKeywords_ = ["in","and","or","not","is not","is a","is","isnt","defined","if unless"],
       blockKeywords_ = ["for","if","else","unless", "from", "to"],
@@ -77893,7 +77708,7 @@ CodeMirror.defineMIME("text/coffeescript", "coffeescript");
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -78490,7 +78305,7 @@ CodeMirror.defineMIME('text/x-jade', 'pug');
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -78566,7 +78381,7 @@ CodeMirror.defineMIME('text/x-jade', 'pug');
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -78708,7 +78523,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -78924,8 +78739,17 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 /* 132 */
 /***/ (function(module, exports, __webpack_require__) {
 
-// CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+(function(mod) {
+    if (true) // CommonJS
+      mod(__webpack_require__(0), __webpack_require__(133), __webpack_require__(134), __webpack_require__(135));
+    else if (typeof define == "function" && define.amd) // AMD
+      define(["../lib/codemirror", "../addon/search/searchcursor", "../addon/dialog/dialog", "../addon/edit/matchbrackets"], mod);
+    else // Plain browser env
+      mod(CodeMirror);
+  })(function(CodeMirror) {
+    'use strict';
+  // CodeMirror, copyright (c) by Marijn Haverbeke and others
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 /**
  * Supported keybindings:
@@ -78960,15 +78784,28 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
  *  9. Ex command implementations.
  */
 
-(function(mod) {
-  if (true) // CommonJS
-    mod(__webpack_require__(0), __webpack_require__(133), __webpack_require__(134), __webpack_require__(135));
-  else if (typeof define == "function" && define.amd) // AMD
-    define(["../lib/codemirror", "../addon/search/searchcursor", "../addon/dialog/dialog", "../addon/edit/matchbrackets"], mod);
-  else // Plain browser env
-    mod(CodeMirror);
-})(function(CodeMirror) {
-  'use strict';
+function initVim$1(CodeMirror) {
+
+  var Pos = CodeMirror.Pos;
+
+  function transformCursor(cm, range) {
+    var vim = cm.state.vim;
+    if (!vim || vim.insertMode) return range.head;
+    var head = vim.sel.head;
+    if (!head)  return range.head;
+
+    if (vim.visualBlock) {
+      if (range.head.line != head.line) {
+        return;
+      }
+    }
+    if (range.from() == range.anchor && !range.empty()) {
+      if (range.head.line == head.line && range.head.ch != head.ch)
+        return new Pos(range.head.line, range.head.ch - 1);
+    }
+
+    return range.head;
+  }
 
   var defaultKeymap = [
     // Key to key mapping. This goes first to make it possible to override
@@ -78977,6 +78814,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: '<Right>', type: 'keyToKey', toKeys: 'l' },
     { keys: '<Up>', type: 'keyToKey', toKeys: 'k' },
     { keys: '<Down>', type: 'keyToKey', toKeys: 'j' },
+    { keys: 'g<Up>', type: 'keyToKey', toKeys: 'gk' },
+    { keys: 'g<Down>', type: 'keyToKey', toKeys: 'gj' },
     { keys: '<Space>', type: 'keyToKey', toKeys: 'l' },
     { keys: '<BS>', type: 'keyToKey', toKeys: 'h', context: 'normal'},
     { keys: '<Del>', type: 'keyToKey', toKeys: 'x', context: 'normal'},
@@ -78990,6 +78829,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: '<C-c>', type: 'keyToKey', toKeys: '<Esc>' },
     { keys: '<C-[>', type: 'keyToKey', toKeys: '<Esc>', context: 'insert' },
     { keys: '<C-c>', type: 'keyToKey', toKeys: '<Esc>', context: 'insert' },
+    { keys: '<C-Esc>', type: 'keyToKey', toKeys: '<Esc>' }, // ipad keyboard sends C-Esc instead of C-[
+    { keys: '<C-Esc>', type: 'keyToKey', toKeys: '<Esc>', context: 'insert' },
     { keys: 's', type: 'keyToKey', toKeys: 'cl', context: 'normal' },
     { keys: 's', type: 'keyToKey', toKeys: 'c', context: 'visual'},
     { keys: 'S', type: 'keyToKey', toKeys: 'cc', context: 'normal' },
@@ -78999,6 +78840,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: '<PageUp>', type: 'keyToKey', toKeys: '<C-b>' },
     { keys: '<PageDown>', type: 'keyToKey', toKeys: '<C-f>' },
     { keys: '<CR>', type: 'keyToKey', toKeys: 'j^', context: 'normal' },
+    { keys: '<Ins>', type: 'keyToKey', toKeys: 'i', context: 'normal'},
     { keys: '<Ins>', type: 'action', action: 'toggleOverwrite', context: 'insert' },
     // Motions
     { keys: 'H', type: 'motion', motion: 'moveToTopLine', motionArgs: { linewise: true, toJumplist: true }},
@@ -79028,6 +78870,9 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: '<C-u>', type: 'motion', motion: 'moveByScroll', motionArgs: { forward: false, explicitRepeat: true }},
     { keys: 'gg', type: 'motion', motion: 'moveToLineOrEdgeOfDocument', motionArgs: { forward: false, explicitRepeat: true, linewise: true, toJumplist: true }},
     { keys: 'G', type: 'motion', motion: 'moveToLineOrEdgeOfDocument', motionArgs: { forward: true, explicitRepeat: true, linewise: true, toJumplist: true }},
+    {keys: "g$", type: "motion", motion: "moveToEndOfDisplayLine"},
+    {keys: "g^", type: "motion", motion: "moveToStartOfDisplayLine"},
+    {keys: "g0", type: "motion", motion: "moveToStartOfDisplayLine"},
     { keys: '0', type: 'motion', motion: 'moveToStartOfLine' },
     { keys: '^', type: 'motion', motion: 'moveToFirstNonWhiteSpaceCharacter' },
     { keys: '+', type: 'motion', motion: 'moveByLines', motionArgs: { forward: true, toFirstChar:true }},
@@ -79080,6 +78925,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: 'C', type: 'operator', operator: 'change', operatorArgs: { linewise: true }, context: 'visual'},
     { keys: '~', type: 'operatorMotion', operator: 'changeCase', motion: 'moveByCharacters', motionArgs: { forward: true }, operatorArgs: { shouldMoveCursor: true }, context: 'normal'},
     { keys: '~', type: 'operator', operator: 'changeCase', context: 'visual'},
+    { keys: '<C-u>', type: 'operatorMotion', operator: 'delete', motion: 'moveToStartOfLine', context: 'insert' },
     { keys: '<C-w>', type: 'operatorMotion', operator: 'delete', motion: 'moveByWords', motionArgs: { forward: false, wordEnd: false }, context: 'insert' },
     //ignore C-w in normal mode
     { keys: '<C-w>', type: 'idle', context: 'normal' },
@@ -79123,8 +78969,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { keys: 'z.', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'center' }, motion: 'moveToFirstNonWhiteSpaceCharacter' },
     { keys: 'zt', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'top' }},
     { keys: 'z<CR>', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'top' }, motion: 'moveToFirstNonWhiteSpaceCharacter' },
-    { keys: 'z-', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'bottom' }},
-    { keys: 'zb', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'bottom' }, motion: 'moveToFirstNonWhiteSpaceCharacter' },
+    { keys: 'zb', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'bottom' }},
+    { keys: 'z-', type: 'action', action: 'scrollToCursor', actionArgs: { position: 'bottom' }, motion: 'moveToFirstNonWhiteSpaceCharacter' },
     { keys: '.', type: 'action', action: 'repeatLastEdit' },
     { keys: '<C-a>', type: 'action', action: 'incrementNumberToken', isEdit: true, actionArgs: {increase: true, backtrack: false}},
     { keys: '<C-x>', type: 'action', action: 'incrementNumberToken', isEdit: true, actionArgs: {increase: false, backtrack: false}},
@@ -79174,9 +79020,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     { name: 'global', shortName: 'g' }
   ];
 
-  var Pos = CodeMirror.Pos;
-
-  var Vim = function() {
     function enterVimMode(cm) {
       cm.setOption('disableInput', true);
       cm.setOption('showCursorWhenSelecting', false);
@@ -79191,15 +79034,13 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       cm.off('cursorActivity', onCursorActivity);
       CodeMirror.off(cm.getInputField(), 'paste', getOnPasteFn(cm));
       cm.state.vim = null;
+      if (highlightTimeout) clearTimeout(highlightTimeout);
     }
 
     function detachVimMap(cm, next) {
       if (this == CodeMirror.keyMap.vim) {
+        cm.options.$customCursor = null;
         CodeMirror.rmClass(cm.getWrapperElement(), "cm-fat-cursor");
-        if (cm.getOption("inputStyle") == "contenteditable" && document.body.style.caretColor != null) {
-          disableFatCursorMark(cm);
-          cm.getInputField().style.caretColor = "";
-        }
       }
 
       if (!next || next.attach != attachVimMap)
@@ -79207,55 +79048,13 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     }
     function attachVimMap(cm, prev) {
       if (this == CodeMirror.keyMap.vim) {
+        if (cm.curOp) cm.curOp.selectionChanged = true;
+        cm.options.$customCursor = transformCursor;
         CodeMirror.addClass(cm.getWrapperElement(), "cm-fat-cursor");
-        if (cm.getOption("inputStyle") == "contenteditable" && document.body.style.caretColor != null) {
-          enableFatCursorMark(cm);
-          cm.getInputField().style.caretColor = "transparent";
-        }
       }
 
       if (!prev || prev.attach != attachVimMap)
         enterVimMode(cm);
-    }
-
-    function updateFatCursorMark(cm) {
-      if (!cm.state.fatCursorMarks) return;
-      clearFatCursorMark(cm);
-      var ranges = cm.listSelections(), result = []
-      for (var i = 0; i < ranges.length; i++) {
-        var range = ranges[i];
-        if (range.empty()) {
-          var lineLength = cm.getLine(range.anchor.line).length;
-          if (range.anchor.ch < lineLength) {
-            result.push(cm.markText(range.anchor, Pos(range.anchor.line, range.anchor.ch + 1),
-                                    {className: "cm-fat-cursor-mark"}));
-          } else {
-            result.push(cm.markText(Pos(range.anchor.line, lineLength - 1),
-                                    Pos(range.anchor.line, lineLength),
-                                    {className: "cm-fat-cursor-mark"}));
-          }
-        }
-      }
-      cm.state.fatCursorMarks = result;
-    }
-
-    function clearFatCursorMark(cm) {
-      var marks = cm.state.fatCursorMarks;
-      if (marks) for (var i = 0; i < marks.length; i++) marks[i].clear();
-    }
-
-    function enableFatCursorMark(cm) {
-      cm.state.fatCursorMarks = [];
-      updateFatCursorMark(cm)
-      cm.on("cursorActivity", updateFatCursorMark)
-    }
-
-    function disableFatCursorMark(cm) {
-      clearFatCursorMark(cm);
-      cm.off("cursorActivity", updateFatCursorMark);
-      // explicitly set fatCursorMarks to null because event listener above
-      // can be invoke after removing it, if off is called from operation
-      cm.state.fatCursorMarks = null;
     }
 
     // Deprecated, simply setting the keymap works again.
@@ -79273,7 +79072,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       if (!vimKey) {
         return false;
       }
-      var cmd = CodeMirror.Vim.findKey(cm, vimKey);
+      var cmd = vimApi.findKey(cm, vimKey);
       if (typeof cmd == 'function') {
         CodeMirror.signal(cm, 'vim-keypress', vimKey);
       }
@@ -79586,8 +79385,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           register.clear();
           this.latestRegister = registerName;
           if (cm.openDialog) {
-            this.onRecordingDone = cm.openDialog(
-                document.createTextNode('(recording)['+registerName+']'), null, {bottom:true});
+            var template = dom('span', {class: 'cm-vim-message'}, 'recording @' + registerName);
+            this.onRecordingDone = cm.openDialog(template, null, {bottom:true});
           }
           this.isRecording = true;
         }
@@ -79617,8 +79416,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           // executed in between.
           lastMotion: null,
           marks: {},
-          // Mark for rendering fake cursor for visual mode.
-          fakeCursor: null,
           insertMode: false,
           // Repeat count for changes made in insert mode, triggered by key
           // sequences like 3,i. Only exists when insertMode is true.
@@ -79662,7 +79459,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     }
 
     var lastInsertModeKeyTimer;
-    var vimApi= {
+    var vimApi = {
+      enterVimMode: enterVimMode,
       buildKeyMap: function() {
         // TODO: Convert keymap into dictionary format for fast lookup.
       },
@@ -79690,7 +79488,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         exCommandDispatcher.map(lhs, rhs, ctx);
       },
       unmap: function(lhs, ctx) {
-        exCommandDispatcher.unmap(lhs, ctx);
+        return exCommandDispatcher.unmap(lhs, ctx);
       },
       // Non-recursive map function.
       // NOTE: This will not create mappings to key maps that aren't present
@@ -79784,6 +79582,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           return command();
         }
       },
+      multiSelectHandleKey: multiSelectHandleKey,
+
       /**
        * This is the outermost function called by CodeMirror, after keys have
        * been mapped to their Vim equivalents.
@@ -79811,13 +79611,17 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         function handleEsc() {
           if (key == '<Esc>') {
-            // Clear input state and get back to normal mode.
-            clearInputState(cm);
             if (vim.visualMode) {
+              // Get back to normal mode.
               exitVisualMode(cm);
             } else if (vim.insertMode) {
+              // Get back to normal mode.
               exitInsertMode(cm);
+            } else {
+              // We're already in normal mode. Let '<Esc>' be handled normally.
+              return;
             }
+            clearInputState(cm);
             return true;
           }
         }
@@ -79830,7 +79634,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             match = (/<\w+-.+?>|<\w+>|./).exec(keys);
             key = match[0];
             keys = keys.substring(match.index + key.length);
-            CodeMirror.Vim.handleKey(cm, key, 'mapping');
+            vimApi.handleKey(cm, key, 'mapping');
           }
         }
 
@@ -79877,12 +79681,18 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           if (!keysMatcher) { clearInputState(cm); return false; }
           var context = vim.visualMode ? 'visual' :
                                          'normal';
-          var match = commandDispatcher.matchCommand(keysMatcher[2] || keysMatcher[1], defaultKeymap, vim.inputState, context);
+          var mainKey = keysMatcher[2] || keysMatcher[1];
+          if (vim.inputState.operatorShortcut && vim.inputState.operatorShortcut.slice(-1) == mainKey) {
+            // multikey operators act linewise by repeating only the last character
+            mainKey = vim.inputState.operatorShortcut;
+          }
+          var match = commandDispatcher.matchCommand(mainKey, defaultKeymap, vim.inputState, context);
           if (match.type == 'none') { clearInputState(cm); return false; }
           else if (match.type == 'partial') { return true; }
+          else if (match.type == 'clear') { clearInputState(cm); return true; }
 
           vim.inputState.keyBuffer = '';
-          var keysMatcher = /^(\d*)(.*)$/.exec(keys);
+          keysMatcher = /^(\d*)(.*)$/.exec(keys);
           if (keysMatcher[1] && keysMatcher[1] != '0') {
             vim.inputState.pushRepeatDigit(keysMatcher[1]);
           }
@@ -79913,7 +79723,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
                 // clear VIM state in case it's in a bad state.
                 cm.state.vim = undefined;
                 maybeInitVimState(cm);
-                if (!CodeMirror.Vim.suppressErrorLogging) {
+                if (!vimApi.suppressErrorLogging) {
                   console['log'](e);
                 }
                 throw e;
@@ -80184,7 +79994,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         if (bestMatch.keys.slice(-11) == '<character>') {
           var character = lastChar(keys);
-          if (!character) return {type: 'none'};
+          if (!character || character.length > 1) return {type: 'clear'};
           inputState.selectedCharacter = character;
         }
         return {type: 'full', command: bestMatch};
@@ -80211,8 +80021,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           case 'keyToEx':
             this.processEx(cm, vim, command);
             break;
-          default:
-            break;
         }
       },
       processMotion: function(cm, vim, command) {
@@ -80237,6 +80045,9 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         inputState.operator = command.operator;
         inputState.operatorArgs = copyArgs(command.operatorArgs);
+        if (command.keys.length > 1) {
+          inputState.operatorShortcut = command.keys;
+        }
         if (command.exitVisualBlock) {
             vim.visualBlock = false;
             updateCmSelection(cm);
@@ -80425,6 +80236,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           vimGlobalState.exCommandHistoryController.pushInput(input);
           vimGlobalState.exCommandHistoryController.reset();
           exCommandDispatcher.processCommand(cm, input);
+          clearInputState(cm);
         }
         function onPromptKeyDown(e, input, close) {
           var keyName = CodeMirror.keyName(e), up, offset;
@@ -80565,17 +80377,17 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             var chOffset = Math.abs(lastSel.head.ch - lastSel.anchor.ch);
             if (lastSel.visualLine) {
               // Linewise Visual mode: The same number of lines.
-              newHead = Pos(oldAnchor.line + lineOffset, oldAnchor.ch);
+              newHead = new Pos(oldAnchor.line + lineOffset, oldAnchor.ch);
             } else if (lastSel.visualBlock) {
               // Blockwise Visual mode: The same number of lines and columns.
-              newHead = Pos(oldAnchor.line + lineOffset, oldAnchor.ch + chOffset);
+              newHead = new Pos(oldAnchor.line + lineOffset, oldAnchor.ch + chOffset);
             } else if (lastSel.head.line == lastSel.anchor.line) {
               // Normal Visual mode within one line: The same number of characters.
-              newHead = Pos(oldAnchor.line, oldAnchor.ch + chOffset);
+              newHead = new Pos(oldAnchor.line, oldAnchor.ch + chOffset);
             } else {
               // Normal Visual mode with several lines: The same number of lines, in the
               // last line the same number of characters as in the last line the last time.
-              newHead = Pos(oldAnchor.line + lineOffset, oldAnchor.ch);
+              newHead = new Pos(oldAnchor.line + lineOffset, oldAnchor.ch);
             }
             vim.visualMode = true;
             vim.visualLine = lastSel.visualLine;
@@ -80615,7 +80427,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
                   ranges[i].head.ch = lineLength(cm, ranges[i].head.line);
                 }
               } else if (mode == 'line') {
-                ranges[0].head = Pos(ranges[0].head.line + 1, 0);
+                ranges[0].head = new Pos(ranges[0].head.line + 1, 0);
               }
             }
           } else {
@@ -80677,22 +80489,22 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     var motions = {
       moveToTopLine: function(cm, _head, motionArgs) {
         var line = getUserVisibleLines(cm).top + motionArgs.repeat -1;
-        return Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+        return new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
       },
       moveToMiddleLine: function(cm) {
         var range = getUserVisibleLines(cm);
         var line = Math.floor((range.top + range.bottom) * 0.5);
-        return Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+        return new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
       },
       moveToBottomLine: function(cm, _head, motionArgs) {
         var line = getUserVisibleLines(cm).bottom - motionArgs.repeat +1;
-        return Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
+        return new Pos(line, findFirstNonWhiteSpaceCharacter(cm.getLine(line)));
       },
       expandToLine: function(_cm, head, motionArgs) {
         // Expands forward to end of line, and then to next line if repeat is
         // >1. Does not handle backward motion!
         var cur = head;
-        return Pos(cur.line + motionArgs.repeat - 1, Infinity);
+        return new Pos(cur.line + motionArgs.repeat - 1, Infinity);
       },
       findNext: function(cm, _head, motionArgs) {
         var state = getSearchState(cm);
@@ -80749,7 +80561,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         // For whatever reason, when we use the "to" as returned by searchcursor.js directly,
         // the resulting selection is extended by 1 char. Let's shrink it so that only the
         // match is selected.
-        var to = Pos(next[1].line, next[1].ch - 1);
+        var to = new Pos(next[1].line, next[1].ch - 1);
 
         if (vim.visualMode) {
           // If we were in visualLine or visualBlock mode, get out of it.
@@ -80798,8 +80610,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         if (vim.visualBlock && motionArgs.sameLine) {
           var sel = vim.sel;
           return [
-            clipCursorToContent(cm, Pos(sel.anchor.line, sel.head.ch)),
-            clipCursorToContent(cm, Pos(sel.head.line, sel.anchor.ch))
+            clipCursorToContent(cm, new Pos(sel.anchor.line, sel.head.ch)),
+            clipCursorToContent(cm, new Pos(sel.head.line, sel.anchor.ch))
           ];
         } else {
           return ([vim.sel.head, vim.sel.anchor]);
@@ -80839,7 +80651,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           // Vim places the cursor on the first non-whitespace character of
           // the line if there is one, else it places the cursor at the end
           // of the line, regardless of whether a mark was found.
-          best = Pos(best.line, findFirstNonWhiteSpaceCharacter(cm.getLine(best.line)));
+          best = new Pos(best.line, findFirstNonWhiteSpaceCharacter(cm.getLine(best.line)));
         }
         return best;
       },
@@ -80847,7 +80659,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         var cur = head;
         var repeat = motionArgs.repeat;
         var ch = motionArgs.forward ? cur.ch + repeat : cur.ch - repeat;
-        return Pos(cur.line, ch);
+        return new Pos(cur.line, ch);
       },
       moveByLines: function(cm, head, motionArgs, vim) {
         var cur = head;
@@ -80889,8 +80701,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           endCh=findFirstNonWhiteSpaceCharacter(cm.getLine(line));
           vim.lastHPos = endCh;
         }
-        vim.lastHSPos = cm.charCoords(Pos(line, endCh),'div').left;
-        return Pos(line, endCh);
+        vim.lastHSPos = cm.charCoords(new Pos(line, endCh),'div').left;
+        return new Pos(line, endCh);
       },
       moveByDisplayLines: function(cm, head, motionArgs, vim) {
         var cur = head;
@@ -80912,7 +80724,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             var goalCoords = { top: lastCharCoords.top + 8, left: vim.lastHSPos };
             var res = cm.coordsChar(goalCoords, 'div');
           } else {
-            var resCoords = cm.charCoords(Pos(cm.firstLine(), 0), 'div');
+            var resCoords = cm.charCoords(new Pos(cm.firstLine(), 0), 'div');
             resCoords.left = vim.lastHSPos;
             res = cm.coordsChar(resCoords, 'div');
           }
@@ -80945,7 +80757,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         var orig = cm.charCoords(head, 'local');
         motionArgs.repeat = repeat;
-        var curEnd = motions.moveByDisplayLines(cm, head, motionArgs, vim);
+        curEnd = motions.moveByDisplayLines(cm, head, motionArgs, vim);
         if (!curEnd) {
           return null;
         }
@@ -80992,7 +80804,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         // Go to the start of the line where the text begins, or the end for
         // whitespace-only lines
         var cursor = head;
-        return Pos(cursor.line,
+        return new Pos(cursor.line,
                    findFirstNonWhiteSpaceCharacter(cm.getLine(cursor.line)));
       },
       moveToMatchedSymbol: function(cm, head) {
@@ -81004,7 +80816,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         for (; ch < lineText.length; ch++) {
           symbol = lineText.charAt(ch);
           if (symbol && isMatchableSymbol(symbol)) {
-            var style = cm.getTokenTypeAt(Pos(line, ch + 1));
+            var style = cm.getTokenTypeAt(new Pos(line, ch + 1));
             if (style !== "string" && style !== "comment") {
               break;
             }
@@ -81013,22 +80825,32 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         if (ch < lineText.length) {
           // Only include angle brackets in analysis if they are being matched.
           var re = (ch === '<' || ch === '>') ? /[(){}[\]<>]/ : /[(){}[\]]/;
-          var matched = cm.findMatchingBracket(Pos(line, ch), {bracketRegex: re});
+          var matched = cm.findMatchingBracket(new Pos(line, ch), {bracketRegex: re});
           return matched.to;
         } else {
           return cursor;
         }
       },
       moveToStartOfLine: function(_cm, head) {
-        return Pos(head.line, 0);
+        return new Pos(head.line, 0);
       },
       moveToLineOrEdgeOfDocument: function(cm, _head, motionArgs) {
         var lineNum = motionArgs.forward ? cm.lastLine() : cm.firstLine();
         if (motionArgs.repeatIsExplicit) {
           lineNum = motionArgs.repeat - cm.getOption('firstLineNumber');
         }
-        return Pos(lineNum,
+        return new Pos(lineNum,
                    findFirstNonWhiteSpaceCharacter(cm.getLine(lineNum)));
+      },
+      moveToStartOfDisplayLine: function(cm) {
+        cm.execCommand("goLineLeft");
+        return cm.getCursor();
+      },
+      moveToEndOfDisplayLine: function(cm) {
+        cm.execCommand("goLineRight");
+        var head = cm.getCursor();
+        if (head.sticky == "before") head.ch--;
+        return head;
       },
       textObjectManipulation: function(cm, head, motionArgs, vim) {
         // TODO: lots of possible exceptions that can be thrown here. Try da(
@@ -81078,6 +80900,20 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           }
         } else if (character === 't') {
           tmp = expandTagUnderCursor(cm, head, inclusive);
+        } else if (character === 's') {
+          // account for cursor on end of sentence symbol
+          var content = cm.getLine(head.line);
+          if (head.ch > 0 && isEndOfSentenceSymbol(content[head.ch])) {
+            head.ch -= 1;
+          }
+          var end = getSentence(cm, head, motionArgs.repeat, 1, inclusive);
+          var start = getSentence(cm, head, motionArgs.repeat, -1, inclusive);
+          // closer vim behaviour, 'a' only takes the space after the sentence if there is one before and after
+          if (isWhiteSpaceString(cm.getLine(start.line)[start.ch])
+              && isWhiteSpaceString(cm.getLine(end.line)[end.ch -1])) {
+            start = {line: start.line, ch: start.ch + 1};
+          }
+          tmp = {start: start, end: end};
         } else {
           // No text object defined for this, don't move.
           return null;
@@ -81160,7 +80996,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         } else if (args.fullLine) {
             head.ch = Number.MAX_VALUE;
             head.line--;
-            cm.setSelection(anchor, head)
+            cm.setSelection(anchor, head);
             text = cm.getSelection();
             cm.replaceSelection("");
             finalHead = anchor;
@@ -81190,7 +81026,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             if (anchor.line == cm.firstLine()) {
               anchor.ch = 0;
             } else {
-              anchor = Pos(anchor.line - 1, lineLength(cm, anchor.line - 1));
+              anchor = new Pos(anchor.line - 1, lineLength(cm, anchor.line - 1));
             }
           }
           text = cm.getRange(anchor, head);
@@ -81203,7 +81039,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           text = cm.getSelection();
           var replacement = fillArray('', ranges.length);
           cm.replaceSelections(replacement);
-          finalHead = ranges[0].anchor;
+          finalHead = cursorMin(ranges[0].head, ranges[0].anchor);
         }
         vimGlobalState.registerController.pushText(
             args.registerName, 'delete', text,
@@ -81212,22 +81048,30 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       },
       indent: function(cm, args, ranges) {
         var vim = cm.state.vim;
-        var startLine = ranges[0].anchor.line;
-        var endLine = vim.visualBlock ?
-          ranges[ranges.length - 1].anchor.line :
-          ranges[0].head.line;
-        // In visual mode, n> shifts the selection right n times, instead of
-        // shifting n lines right once.
-        var repeat = (vim.visualMode) ? args.repeat : 1;
-        if (args.linewise) {
-          // The only way to delete a newline is to delete until the start of
-          // the next line, so in linewise mode evalInput will include the next
-          // line. We don't want this in indent, so we go back a line.
-          endLine--;
-        }
-        for (var i = startLine; i <= endLine; i++) {
+        if (cm.indentMore) {
+          var repeat = (vim.visualMode) ? args.repeat : 1;
           for (var j = 0; j < repeat; j++) {
-            cm.indentLine(i, args.indentRight);
+            if (args.indentRight) cm.indentMore();
+            else cm.indentLess();
+          }
+        } else {
+          var startLine = ranges[0].anchor.line;
+          var endLine = vim.visualBlock ?
+            ranges[ranges.length - 1].anchor.line :
+            ranges[0].head.line;
+          // In visual mode, n> shifts the selection right n times, instead of
+          // shifting n lines right once.
+          var repeat = (vim.visualMode) ? args.repeat : 1;
+          if (args.linewise) {
+            // The only way to delete a newline is to delete until the start of
+            // the next line, so in linewise mode evalInput will include the next
+            // line. We don't want this in indent, so we go back a line.
+            endLine--;
+          }
+          for (var i = startLine; i <= endLine; i++) {
+            for (var j = 0; j < repeat; j++) {
+              cm.indentLine(i, args.indentRight);
+            }
           }
         }
         return motions.moveToFirstNonWhiteSpaceCharacter(cm, ranges[0].anchor);
@@ -81337,14 +81181,17 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       },
       scrollToCursor: function(cm, actionArgs) {
         var lineNum = cm.getCursor().line;
-        var charCoords = cm.charCoords(Pos(lineNum, 0), 'local');
+        var charCoords = cm.charCoords(new Pos(lineNum, 0), 'local');
         var height = cm.getScrollInfo().clientHeight;
         var y = charCoords.top;
-        var lineHeight = charCoords.bottom - y;
         switch (actionArgs.position) {
-          case 'center': y = y - (height / 2) + lineHeight;
+          case 'center': y = charCoords.bottom - height / 2;
             break;
-          case 'bottom': y = y - height + lineHeight;
+          case 'bottom':
+            var lineLastCharPos = new Pos(lineNum, cm.getLine(lineNum).length - 1);
+            var lineLastCharCoords = cm.charCoords(lineLastCharPos, 'local');
+            var lineHeight = lineLastCharCoords.bottom - y;
+            y = y - height + lineHeight;
             break;
         }
         cm.scrollTo(null, y);
@@ -81389,9 +81236,9 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         var head = actionArgs.head || cm.getCursor('head');
         var height = cm.listSelections().length;
         if (insertAt == 'eol') {
-          head = Pos(head.line, lineLength(cm, head.line));
+          head = new Pos(head.line, lineLength(cm, head.line));
         } else if (insertAt == 'bol') {
-          head = Pos(head.line, 0);
+          head = new Pos(head.line, 0);
         } else if (insertAt == 'charAfter') {
           head = offsetCursor(head, 0, 1);
         } else if (insertAt == 'firstNonBlank') {
@@ -81403,10 +81250,10 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             if (sel.head.line < sel.anchor.line) {
               head = sel.head;
             } else {
-              head = Pos(sel.anchor.line, 0);
+              head = new Pos(sel.anchor.line, 0);
             }
           } else {
-            head = Pos(
+            head = new Pos(
                 Math.min(sel.head.line, sel.anchor.line),
                 Math.min(sel.head.ch, sel.anchor.ch));
             height = Math.abs(sel.head.line - sel.anchor.line) + 1;
@@ -81418,12 +81265,12 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             if (sel.head.line >= sel.anchor.line) {
               head = offsetCursor(sel.head, 0, 1);
             } else {
-              head = Pos(sel.anchor.line, 0);
+              head = new Pos(sel.anchor.line, 0);
             }
           } else {
-            head = Pos(
+            head = new Pos(
                 Math.min(sel.head.line, sel.anchor.line),
-                Math.max(sel.head.ch + 1, sel.anchor.ch));
+                Math.max(sel.head.ch, sel.anchor.ch) + 1);
             height = Math.abs(sel.head.line - sel.anchor.line) + 1;
           }
         } else if (insertAt == 'inplace') {
@@ -81467,7 +81314,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           vim.visualLine = !!actionArgs.linewise;
           vim.visualBlock = !!actionArgs.blockwise;
           head = clipCursorToContent(
-              cm, Pos(anchor.line, anchor.ch + repeat - 1));
+              cm, new Pos(anchor.line, anchor.ch + repeat - 1));
           vim.sel = {
             anchor: anchor,
             head: head
@@ -81530,13 +81377,13 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           // Repeat is the number of lines to join. Minimum 2 lines.
           var repeat = Math.max(actionArgs.repeat, 2);
           curStart = cm.getCursor();
-          curEnd = clipCursorToContent(cm, Pos(curStart.line + repeat - 1,
+          curEnd = clipCursorToContent(cm, new Pos(curStart.line + repeat - 1,
                                                Infinity));
         }
         var finalCh = 0;
         for (var i = curStart.line; i < curEnd.line; i++) {
           finalCh = lineLength(cm, curStart.line);
-          var tmp = Pos(curStart.line + 1,
+          var tmp = new Pos(curStart.line + 1,
                         lineLength(cm, curStart.line + 1));
           var text = cm.getRange(curStart, tmp);
           text = actionArgs.keepSpaces
@@ -81544,7 +81391,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             : text.replace(/\n\s*/g, ' ');
           cm.replaceRange(text, curStart, tmp);
         }
-        var curFinalPos = Pos(curStart.line, finalCh);
+        var curFinalPos = new Pos(curStart.line, finalCh);
         if (vim.visualMode) {
           exitVisualMode(cm, false);
         }
@@ -81555,7 +81402,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         var insertAt = copyCursor(cm.getCursor());
         if (insertAt.line === cm.firstLine() && !actionArgs.after) {
           // Special case for inserting newline before start of document.
-          cm.replaceRange('\n', Pos(cm.firstLine(), 0));
+          cm.replaceRange('\n', new Pos(cm.firstLine(), 0));
           cm.setCursor(cm.firstLine(), 0);
         } else {
           insertAt.line = (actionArgs.after) ? insertAt.line :
@@ -81656,7 +81503,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             // first delete the selected text
             cm.replaceSelections(emptyStrings);
             // Set new selections as per the block length of the yanked text
-            selectionEnd = Pos(selectionStart.line + text.length-1, selectionStart.ch);
+            selectionEnd = new Pos(selectionStart.line + text.length-1, selectionStart.ch);
             cm.setCursor(selectionStart);
             selectBlock(cm, selectionEnd);
             cm.replaceSelections(text);
@@ -81683,7 +81530,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             for (var i = 0; i < text.length; i++) {
               var line = cur.line+i;
               if (line > cm.lastLine()) {
-                cm.replaceRange('\n',  Pos(line, 0));
+                cm.replaceRange('\n',  new Pos(line, 0));
               }
               var lastCh = lineLength(cm, line);
               if (lastCh < cur.ch) {
@@ -81691,18 +81538,18 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
               }
             }
             cm.setCursor(cur);
-            selectBlock(cm, Pos(cur.line + text.length-1, cur.ch));
+            selectBlock(cm, new Pos(cur.line + text.length-1, cur.ch));
             cm.replaceSelections(text);
             curPosFinal = cur;
           } else {
             cm.replaceRange(text, cur);
             // Now fine tune the cursor to where we want it.
             if (linewise && actionArgs.after) {
-              curPosFinal = Pos(
+              curPosFinal = new Pos(
               cur.line + 1,
               findFirstNonWhiteSpaceCharacter(cm.getLine(cur.line + 1)));
             } else if (linewise && !actionArgs.after) {
-              curPosFinal = Pos(
+              curPosFinal = new Pos(
                 cur.line,
                 findFirstNonWhiteSpaceCharacter(cm.getLine(cur.line)));
             } else if (!linewise && actionArgs.after) {
@@ -81750,7 +81597,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           if (replaceTo > line.length) {
             replaceTo=line.length;
           }
-          curEnd = Pos(curStart.line, replaceTo);
+          curEnd = new Pos(curStart.line, replaceTo);
         }
         if (replaceWith=='\n') {
           if (!vim.visualMode) cm.replaceRange('', curStart, curEnd);
@@ -81794,25 +81641,25 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         if (!actionArgs.backtrack && (end <= cur.ch))return;
         if (match) {
-          var baseStr = match[2] || match[4]
-          var digits = match[3] || match[5]
+          var baseStr = match[2] || match[4];
+          var digits = match[3] || match[5];
           var increment = actionArgs.increase ? 1 : -1;
           var base = {'0b': 2, '0': 8, '': 10, '0x': 16}[baseStr.toLowerCase()];
           var number = parseInt(match[1] + digits, base) + (increment * actionArgs.repeat);
           numberStr = number.toString(base);
-          var zeroPadding = baseStr ? new Array(digits.length - numberStr.length + 1 + match[1].length).join('0') : ''
+          var zeroPadding = baseStr ? new Array(digits.length - numberStr.length + 1 + match[1].length).join('0') : '';
           if (numberStr.charAt(0) === '-') {
             numberStr = '-' + baseStr + zeroPadding + numberStr.substr(1);
           } else {
             numberStr = baseStr + zeroPadding + numberStr;
           }
-          var from = Pos(cur.line, start);
-          var to = Pos(cur.line, end);
+          var from = new Pos(cur.line, start);
+          var to = new Pos(cur.line, end);
           cm.replaceRange(numberStr, from, to);
         } else {
           return;
         }
-        cm.setCursor(Pos(cur.line, start + numberStr.length - 1));
+        cm.setCursor(new Pos(cur.line, start + numberStr.length - 1));
       },
       repeatLastEdit: function(cm, actionArgs, vim) {
         var lastEditInputState = vim.lastEditInputState;
@@ -81849,7 +81696,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       var line = Math.min(Math.max(cm.firstLine(), cur.line), cm.lastLine() );
       var maxCh = lineLength(cm, line) - 1 + !!includeLineBreak;
       var ch = Math.min(Math.max(0, cur.ch), maxCh);
-      return Pos(line, ch);
+      return new Pos(line, ch);
     }
     function copyArgs(args) {
       var ret = {};
@@ -81865,7 +81712,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         offsetCh = offsetLine.ch;
         offsetLine = offsetLine.line;
       }
-      return Pos(cur.line + offsetLine, cur.ch + offsetCh);
+      return new Pos(cur.line + offsetLine, cur.ch + offsetCh);
     }
     function commandMatches(keys, keyMap, context, inputState) {
       // Partial matches are not applied. They inform the key handler
@@ -81925,7 +81772,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       };
     }
     function copyCursor(cur) {
-      return Pos(cur.line, cur.ch);
+      return new Pos(cur.line, cur.ch);
     }
     function cursorEqual(cur1, cur2) {
       return cur1.ch == cur2.ch && cur1.line == cur2.line;
@@ -81972,7 +81819,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     function extendLineToColumn(cm, lineNum, column) {
       var endCh = lineLength(cm, lineNum);
       var spaces = new Array(column-endCh+1).join(' ');
-      cm.setCursor(Pos(lineNum, endCh));
+      cm.setCursor(new Pos(lineNum, endCh));
       cm.replaceRange(spaces, cm.getCursor());
     }
     // This functions selects a rectangular block
@@ -82053,13 +81900,13 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         if (block) {
           var width = block.width;
           var height = block.height;
-          selectionEnd = Pos(selectionStart.line + height, selectionStart.ch + width);
+          selectionEnd = new Pos(selectionStart.line + height, selectionStart.ch + width);
           var selections = [];
           // selectBlock creates a 'proper' rectangular block.
           // We do not want that in all cases, so we manually set selections.
           for (var i = selectionStart.line; i < selectionEnd.line; i++) {
-            var anchor = Pos(i, selectionStart.ch);
-            var head = Pos(i, selectionEnd.ch);
+            var anchor = new Pos(i, selectionStart.ch);
+            var head = new Pos(i, selectionEnd.ch);
             var range = {anchor: anchor, head: head};
             selections.push(range);
           }
@@ -82071,8 +81918,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           var ch = end.ch - start.ch;
           selectionEnd = {line: selectionEnd.line + line, ch: line ? selectionEnd.ch : ch + selectionEnd.ch};
           if (lastSelection.visualLine) {
-            selectionStart = Pos(selectionStart.line, 0);
-            selectionEnd = Pos(selectionEnd.line, lineLength(cm, selectionEnd.line));
+            selectionStart = new Pos(selectionStart.line, 0);
+            selectionEnd = new Pos(selectionEnd.line, lineLength(cm, selectionEnd.line));
           }
           cm.setSelection(selectionStart, selectionEnd);
         }
@@ -82121,7 +81968,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         head = cursorMax(head, end);
         head = offsetCursor(head, 0, -1);
         if (head.ch == -1 && head.line != cm.firstLine()) {
-          head = Pos(head.line - 1, lineLength(cm, head.line - 1));
+          head = new Pos(head.line - 1, lineLength(cm, head.line - 1));
         }
       }
       return [anchor, head];
@@ -82137,7 +81984,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         vim.visualLine ? 'line' : vim.visualBlock ? 'block' : 'char';
       var cmSel = makeCmSelection(cm, sel, mode);
       cm.setSelections(cmSel.ranges, cmSel.primary);
-      updateFakeCursor(cm);
     }
     function makeCmSelection(cm, sel, mode, exclusive) {
       var head = copyCursor(sel.head);
@@ -82170,16 +82016,17 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         };
       } else if (mode == 'block') {
         var top = Math.min(anchor.line, head.line),
-            left = Math.min(anchor.ch, head.ch),
+            fromCh = anchor.ch,
             bottom = Math.max(anchor.line, head.line),
-            right = Math.max(anchor.ch, head.ch) + 1;
-        var height = bottom - top + 1;
+            toCh = head.ch;
+        if (fromCh < toCh) { toCh += 1; }
+        else { fromCh += 1; }        var height = bottom - top + 1;
         var primary = head.line == top ? 0 : height - 1;
         var ranges = [];
         for (var i = 0; i < height; i++) {
           ranges.push({
-            anchor: Pos(top + i, left),
-            head: Pos(top + i, right)
+            anchor: new Pos(top + i, fromCh),
+            head: new Pos(top + i, toCh)
           });
         }
         return {
@@ -82213,7 +82060,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       vim.visualLine = false;
       vim.visualBlock = false;
       if (!vim.insertMode) CodeMirror.signal(cm, "vim-mode-change", {mode: "normal"});
-      clearFakeCursor(vim);
     }
 
     // Remove any trailing newlines from the selection. For
@@ -82301,7 +82147,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           if (!start) { start = wordStart; }
         }
       }
-      return { start: Pos(cur.line, start), end: Pos(cur.line, end) };
+      return { start: new Pos(cur.line, start), end: new Pos(cur.line, end) };
     }
 
     /**
@@ -82475,7 +82321,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
       }
       if (state.nextCh || state.curMoveThrough) {
-        return Pos(line, state.index);
+        return new Pos(line, state.index);
       }
       return cur;
     }
@@ -82587,7 +82433,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           break;
         }
         words.push(word);
-        cur = Pos(word.line, forward ? (word.to - 1) : word.from);
+        cur = new Pos(word.line, forward ? (word.to - 1) : word.from);
       }
       var shortCircuit = words.length != repeat;
       var firstWord = words[0];
@@ -82598,25 +82444,25 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           // We did not start in the middle of a word. Discard the extra word at the end.
           lastWord = words.pop();
         }
-        return Pos(lastWord.line, lastWord.from);
+        return new Pos(lastWord.line, lastWord.from);
       } else if (forward && wordEnd) {
-        return Pos(lastWord.line, lastWord.to - 1);
+        return new Pos(lastWord.line, lastWord.to - 1);
       } else if (!forward && wordEnd) {
         // ge
         if (!shortCircuit && (firstWord.to != curStart.ch || firstWord.line != curStart.line)) {
           // We did not start in the middle of a word. Discard the extra word at the end.
           lastWord = words.pop();
         }
-        return Pos(lastWord.line, lastWord.to);
+        return new Pos(lastWord.line, lastWord.to);
       } else {
         // b
-        return Pos(lastWord.line, lastWord.from);
+        return new Pos(lastWord.line, lastWord.from);
       }
     }
 
     function moveToEol(cm, head, motionArgs, vim, keepHPos) {
       var cur = head;
-      var retval= Pos(cur.line + motionArgs.repeat - 1, Infinity);
+      var retval= new Pos(cur.line + motionArgs.repeat - 1, Infinity);
       var end=cm.clipPos(retval);
       end.ch--;
       if (!keepHPos) {
@@ -82638,14 +82484,14 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
         start = idx;
       }
-      return Pos(cm.getCursor().line, idx);
+      return new Pos(cm.getCursor().line, idx);
     }
 
     function moveToColumn(cm, repeat) {
       // repeat is always >= 1, so repeat - 1 always corresponds
       // to the column we want to go to.
       var line = cm.getCursor().line;
-      return clipCursorToContent(cm, Pos(line, repeat - 1));
+      return clipCursorToContent(cm, new Pos(line, repeat - 1));
     }
 
     function updateMark(cm, vim, markName, pos) {
@@ -82726,21 +82572,156 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       start = new Pos(i, 0);
       return { start: start, end: end };
     }
-
-    function findSentence(cm, cur, repeat, dir) {
-
-      /*
-        Takes an index object
-        {
-          line: the line string,
-          ln: line number,
-          pos: index in line,
-          dir: direction of traversal (-1 or 1)
+  function getSentence(cm, cur, repeat, dir, inclusive /*includes whitespace*/) {
+    /*
+    Takes an index object
+    {
+    line: the line string,
+    ln: line number,
+    pos: index in line,
+    dir: direction of traversal (-1 or 1)
+    }
+    and modifies the pos member to represent the
+    next valid position or sets the line to null if there are
+    no more valid positions.
+   */
+    function nextChar(curr) {
+      if (curr.pos + curr.dir < 0 || curr.pos + curr.dir >= curr.line.length) {
+          curr.line = null;
         }
-        and modifies the line, ln, and pos members to represent the
-        next valid position or sets them to null if there are
-        no more valid positions.
-       */
+      else {
+        curr.pos += curr.dir;
+      }
+    }
+    /*
+    Performs one iteration of traversal in forward direction
+    Returns an index object of the new location
+   */
+    function forward(cm, ln, pos, dir) {
+      var line = cm.getLine(ln);
+
+      var curr = {
+        line: line,
+        ln: ln,
+        pos: pos,
+        dir: dir,
+      };
+
+      if (curr.line === "") {
+        return { ln: curr.ln, pos: curr.pos };
+      }
+
+      var lastSentencePos = curr.pos;
+
+      // Move one step to skip character we start on
+      nextChar(curr);
+
+      while (curr.line !== null) {
+        lastSentencePos = curr.pos;
+        if (isEndOfSentenceSymbol(curr.line[curr.pos])) {
+          if (!inclusive) {
+            return { ln: curr.ln, pos: curr.pos + 1 };
+          } else {
+            nextChar(curr);
+            while (curr.line !== null ) {
+              if (isWhiteSpaceString(curr.line[curr.pos])) {
+                lastSentencePos = curr.pos;
+                nextChar(curr);
+              } else {
+                break;
+              }
+            }
+            return { ln: curr.ln, pos: lastSentencePos + 1, };
+          }
+        }
+        nextChar(curr);
+      }
+      return { ln: curr.ln, pos: lastSentencePos + 1 };
+    }
+
+    /*
+    Performs one iteration of traversal in reverse direction
+    Returns an index object of the new location
+   */
+    function reverse(cm, ln, pos, dir) {
+      var line = cm.getLine(ln);
+
+      var curr = {
+        line: line,
+        ln: ln,
+        pos: pos,
+        dir: dir,
+      };
+
+      if (curr.line === "") {
+        return { ln: curr.ln, pos: curr.pos };
+      }
+
+      var lastSentencePos = curr.pos;
+
+      // Move one step to skip character we start on
+      nextChar(curr);
+
+      while (curr.line !== null) {
+        if (!isWhiteSpaceString(curr.line[curr.pos]) && !isEndOfSentenceSymbol(curr.line[curr.pos])) {
+          lastSentencePos = curr.pos;
+        }
+
+        else if (isEndOfSentenceSymbol(curr.line[curr.pos]) ) {
+          if (!inclusive) {
+            return { ln: curr.ln, pos: lastSentencePos };
+          } else {
+              if (isWhiteSpaceString(curr.line[curr.pos + 1])) {
+                return { ln: curr.ln, pos: curr.pos + 1, };
+              } else {
+                return {ln: curr.ln, pos: lastSentencePos};
+              }
+          }
+        }
+
+        nextChar(curr);
+      }
+      curr.line = line;
+      if (inclusive && isWhiteSpaceString(curr.line[curr.pos])) {
+        return { ln: curr.ln, pos: curr.pos };
+      } else {
+        return { ln: curr.ln, pos: lastSentencePos };
+      }
+
+    }
+
+    var curr_index = {
+      ln: cur.line,
+      pos: cur.ch,
+    };
+
+    while (repeat > 0) {
+      if (dir < 0) {
+        curr_index = reverse(cm, curr_index.ln, curr_index.pos, dir);
+      }
+      else {
+        curr_index = forward(cm, curr_index.ln, curr_index.pos, dir);
+      }
+      repeat--;
+    }
+
+    return new Pos(curr_index.ln, curr_index.pos);
+  }
+
+  function findSentence(cm, cur, repeat, dir) {
+
+    /*
+    Takes an index object
+    {
+    line: the line string,
+    ln: line number,
+    pos: index in line,
+    dir: direction of traversal (-1 or 1)
+    }
+    and modifies the line, ln, and pos members to represent the
+    next valid position or sets them to null if there are
+    no more valid positions.
+   */
       function nextChar(cm, idx) {
         if (idx.pos + idx.dir < 0 || idx.pos + idx.dir >= idx.line.length) {
           idx.ln += idx.dir;
@@ -82771,12 +82752,12 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           ln: ln,
           pos: pos,
           dir: dir,
-        }
+        };
 
         var last_valid = {
           ln: curr.ln,
           pos: curr.pos,
-        }
+        };
 
         var skip_empty_lines = (curr.line === "");
 
@@ -82832,7 +82813,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           ln: ln,
           pos: pos,
           dir: dir,
-        }
+        };
 
         var last_valid = {
           ln: curr.ln,
@@ -82861,7 +82842,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           }
           else if (curr.line !== "" && !isWhiteSpaceString(curr.line[curr.pos])) {
             skip_empty_lines = false;
-            last_valid = { ln: curr.ln, pos: curr.pos }
+            last_valid = { ln: curr.ln, pos: curr.pos };
           }
 
           nextChar(cm, curr);
@@ -82897,7 +82878,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         repeat--;
       }
 
-      return Pos(curr_index.ln, curr_index.pos);
+      return new Pos(curr_index.ln, curr_index.pos);
     }
 
     // TODO: perhaps this finagling of start and end positions belongs
@@ -82920,8 +82901,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       // cursor is on a matching open bracket.
       var offset = curChar === openSym ? 1 : 0;
 
-      start = cm.scanForBracket(Pos(cur.line, cur.ch + offset), -1, undefined, {'bracketRegex': bracketRegexp});
-      end = cm.scanForBracket(Pos(cur.line, cur.ch + offset), 1, undefined, {'bracketRegex': bracketRegexp});
+      start = cm.scanForBracket(new Pos(cur.line, cur.ch + offset), -1, undefined, {'bracketRegex': bracketRegexp});
+      end = cm.scanForBracket(new Pos(cur.line, cur.ch + offset), 1, undefined, {'bracketRegex': bracketRegexp});
 
       if (!start || !end) {
         return { start: cur, end: cur };
@@ -83002,8 +82983,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       }
 
       return {
-        start: Pos(cur.line, start),
-        end: Pos(cur.line, end)
+        start: new Pos(cur.line, start),
+        end: new Pos(cur.line, end)
       };
     }
 
@@ -83223,7 +83204,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         ignoreCase = (/^[^A-Z]*$/).test(regexPart);
       }
       var regexp = new RegExp(regexPart,
-          (ignoreCase || forceIgnoreCase) ? 'i' : undefined);
+          (ignoreCase || forceIgnoreCase) ? 'im' : 'm');
       return regexp;
     }
 
@@ -83253,7 +83234,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     }
 
     function showConfirm(cm, template) {
-      var pre = dom('pre', {$color: 'red'}, template);
+      var pre = dom('div', {$color: 'red', $whiteSpace: 'pre', class: 'cm-vim-message'}, template);
       if (cm.openNotification) {
         cm.openNotification(pre, {bottom: true, duration: 5000});
       } else {
@@ -83271,7 +83252,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     }
 
     function showPrompt(cm, options) {
-      var shortText = (options.prefix || '') + ' ' + (options.desc || '');
       var template = makePrompt(options.prefix, options.desc);
       if (cm.openDialog) {
         cm.openDialog(template, options.onClose, {
@@ -83280,6 +83260,9 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         });
       }
       else {
+        var shortText = '';
+        if (typeof options.prefix != "string" && options.prefix) shortText += options.prefix.textContent;
+        if (options.desc) shortText += " " + options.desc;
         options.onClose(prompt(shortText, ''));
       }
     }
@@ -83354,6 +83337,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     function highlightSearchMatches(cm, query) {
       clearTimeout(highlightTimeout);
       highlightTimeout = setTimeout(function() {
+        if (!cm.state.vim) return;
         var searchState = getSearchState(cm);
         var overlay = searchState.getOverlay();
         if (!overlay || query != overlay.query) {
@@ -83379,12 +83363,19 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         var cursor = cm.getSearchCursor(query, pos);
         for (var i = 0; i < repeat; i++) {
           var found = cursor.find(prev);
-          if (i == 0 && found && cursorEqual(cursor.from(), pos)) { found = cursor.find(prev); }
+          if (i == 0 && found && cursorEqual(cursor.from(), pos)) {
+            var lastEndPos = prev ? cursor.from() : cursor.to();
+            found = cursor.find(prev);
+            if (found && !found[0] && cursorEqual(cursor.from(), lastEndPos)) {
+              if (cm.getLine(lastEndPos.line).length == lastEndPos.ch)
+                found = cursor.find(prev);
+            }
+          }
           if (!found) {
             // SearchCursor may have returned null because it hit EOF, wrap
             // around and try again.
             cursor = cm.getSearchCursor(query,
-                (prev) ? Pos(cm.lastLine()) : Pos(cm.firstLine(), 0) );
+                (prev) ? new Pos(cm.lastLine()) : new Pos(cm.firstLine(), 0) );
             if (!cursor.find(prev)) {
               return;
             }
@@ -83420,7 +83411,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             // SearchCursor may have returned null because it hit EOF, wrap
             // around and try again.
             cursor = cm.getSearchCursor(query,
-                (prev) ? Pos(cm.lastLine()) : Pos(cm.firstLine(), 0) );
+                (prev) ? new Pos(cm.lastLine()) : new Pos(cm.firstLine(), 0) );
             if (!cursor.find(prev)) {
               return;
             }
@@ -83476,7 +83467,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 
     function getMarkPos(cm, vim, markName) {
       if (markName == '\'' || markName == '`') {
-        return vimGlobalState.jumpList.find(cm, -1) || Pos(0, 0);
+        return vimGlobalState.jumpList.find(cm, -1) || new Pos(0, 0);
       } else if (markName == '.') {
         return getLastEditPos(cm);
       }
@@ -83541,7 +83532,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             if (command.type == 'exToKey') {
               // Handle Ex to Key mapping.
               for (var i = 0; i < command.toKeys.length; i++) {
-                CodeMirror.Vim.handleKey(cm, command.toKeys[i], 'mapping');
+                vimApi.handleKey(cm, command.toKeys[i], 'mapping');
               }
               return;
             } else if (command.type == 'exToEx') {
@@ -83716,7 +83707,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           var commandName = lhs.substring(1);
           if (this.commandMap_[commandName] && this.commandMap_[commandName].user) {
             delete this.commandMap_[commandName];
-            return;
+            return true;
           }
         } else {
           // Key to Ex or key to key mapping
@@ -83725,11 +83716,10 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
             if (keys == defaultKeymap[i].keys
                 && defaultKeymap[i].context === ctx) {
               defaultKeymap.splice(i, 1);
-              return;
+              return true;
             }
           }
         }
-        throw Error('No such mapping.');
       }
     };
 
@@ -83756,13 +83746,11 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       vmap: function(cm, params) { this.map(cm, params, 'visual'); },
       unmap: function(cm, params, ctx) {
         var mapArgs = params.args;
-        if (!mapArgs || mapArgs.length < 1) {
+        if (!mapArgs || mapArgs.length < 1 || !exCommandDispatcher.unmap(mapArgs[0], ctx)) {
           if (cm) {
             showConfirm(cm, 'No such mapping: ' + params.input);
           }
-          return;
         }
-        exCommandDispatcher.unmap(mapArgs[0], ctx);
       },
       move: function(cm, params) {
         commandDispatcher.processCommand(cm, cm.state.vim, {
@@ -83841,7 +83829,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           for (var registerName in registers) {
             var text = registers[registerName].toString();
             if (text.length) {
-              regInfo += '"' + registerName + '    ' + text + '\n'
+              regInfo += '"' + registerName + '    ' + text + '\n';
             }
           }
         } else {
@@ -83853,7 +83841,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
               continue;
             }
             var register = registers[registerName] || new Register();
-            regInfo += '"' + registerName + '    ' + register.toString() + '\n'
+            regInfo += '"' + registerName + '    ' + register.toString() + '\n';
           }
         }
         showConfirm(cm, regInfo);
@@ -83890,8 +83878,8 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         var lineStart = params.line || cm.firstLine();
         var lineEnd = params.lineEnd || params.line || cm.lastLine();
         if (lineStart == lineEnd) { return; }
-        var curStart = Pos(lineStart, 0);
-        var curEnd = Pos(lineEnd, lineLength(cm, lineEnd));
+        var curStart = new Pos(lineStart, 0);
+        var curEnd = new Pos(lineEnd, lineLength(cm, lineEnd));
         var text = cm.getRange(curStart, curEnd).split('\n');
         var numberRegex = pattern ? pattern :
            (number == 'decimal') ? /(-?)([\d]+)/ :
@@ -84032,12 +84020,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
               regexPart = new RegExp(regexPart).source; //normalize not escaped characters
           }
           replacePart = tokens[1];
-          // If the pattern ends with $ (line boundary assertion), change $ to \n.
-          // Caveat: this workaround cannot match on the last line of the document.
-          if (/(^|[^\\])(\\\\)*\$$/.test(regexPart)) {
-            regexPart = regexPart.slice(0, -1) + '\\n';
-            replacePart = (replacePart || '') + '\n';
-          }
           if (replacePart !== undefined) {
             if (getOption('pcre')) {
               replacePart = unescapeRegexReplace(replacePart.replace(/([^\\])&/g,"$1$$&"));
@@ -84103,7 +84085,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           lineStart = lineEnd;
           lineEnd = lineStart + count - 1;
         }
-        var startPos = clipCursorToContent(cm, Pos(lineStart, 0));
+        var startPos = clipCursorToContent(cm, new Pos(lineStart, 0));
         var cursor = cm.getSearchCursor(query, startPos);
         doReplace(cm, confirm, global, lineStart, lineEnd, cursor, query, replacePart, params.callback);
       },
@@ -84227,10 +84209,18 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         lineEnd += modifiedLineNumber - unmodifiedLineNumber;
         joined = modifiedLineNumber < unmodifiedLineNumber;
       }
+      function findNextValidMatch() {
+        var lastMatchTo = lastPos && copyCursor(searchCursor.to());
+        var match = searchCursor.findNext();
+        if (match && !match[0] && lastMatchTo && cursorEqual(searchCursor.from(), lastMatchTo)) {
+          match = searchCursor.findNext();
+        }
+        return match;
+      }
       function next() {
         // The below only loops to skip over multiple occurrences on the same
         // line when 'global' is not true.
-        while(searchCursor.findNext() &&
+        while(findNextValidMatch() &&
               isInRange(searchCursor.from(), lineStart, lineEnd)) {
           if (!global && searchCursor.from().line == modifiedLineNumber && !joined) {
             continue;
@@ -84395,7 +84385,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           match = (/<\w+-.+?>|<\w+>|./).exec(text);
           key = match[0];
           text = text.substring(match.index + key.length);
-          CodeMirror.Vim.handleKey(cm, key, 'macro');
+          vimApi.handleKey(cm, key, 'macro');
           if (vim.insertMode) {
             var changes = register.insertModeChanges[imc++].changes;
             vimGlobalState.macroModeState.lastInsertModeChanges.changes =
@@ -84489,36 +84479,6 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
         }
       } else if (!cm.curOp.isVimOp) {
         handleExternalSelection(cm, vim);
-      }
-      if (vim.visualMode) {
-        updateFakeCursor(cm);
-      }
-    }
-    /**
-     * Keeps track of a fake cursor to support visual mode cursor behavior.
-     */
-    function updateFakeCursor(cm) {
-      var className = 'cm-animate-fat-cursor';
-      var vim = cm.state.vim;
-      var from = clipCursorToContent(cm, copyCursor(vim.sel.head));
-      var to = offsetCursor(from, 0, 1);
-      clearFakeCursor(vim);
-      // In visual mode, the cursor may be positioned over EOL.
-      if (from.ch == cm.getLine(from.line).length) {
-        var widget = dom('span', { 'class': className }, '\u00a0');
-        vim.fakeCursorBookmark = cm.setBookmark(from, {widget: widget});
-      } else {
-        vim.fakeCursor = cm.markText(from, to, {className: className});
-      }
-    }
-    function clearFakeCursor(vim) {
-      if (vim.fakeCursor) {
-        vim.fakeCursor.clear();
-        vim.fakeCursor = null;
-      }
-      if (vim.fakeCursorBookmark) {
-        vim.fakeCursorBookmark.clear();
-        vim.fakeCursorBookmark = null;
       }
     }
     function handleExternalSelection(cm, vim) {
@@ -84661,12 +84621,12 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
           if (change instanceof InsertModeKey) {
             CodeMirror.lookupKey(change.keyName, 'vim-insert', keyHandler);
           } else if (typeof change == "string") {
-            var cur = cm.getCursor();
-            cm.replaceRange(change, cur, cur);
+            cm.replaceSelection(change);
           } else {
             var start = cm.getCursor();
             var end = offsetCursor(start, 0, change[0].length);
             cm.replaceRange(change[0], start, end);
+            cm.setCursor(end);
           }
         }
       }
@@ -84675,20 +84635,95 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
       }
     }
 
-    resetVimGlobalState();
-    return vimApi;
-  };
-  // Initialize Vim and make it available as an API.
-  CodeMirror.Vim = Vim();
-});
+    // multiselect support
+    function cloneVimState(state) {
+      var n = new state.constructor();
+      Object.keys(state).forEach(function(key) {
+        var o = state[key];
+        if (Array.isArray(o))
+          o = o.slice();
+        else if (o && typeof o == "object" && o.constructor != Object)
+          o = cloneVimState(o);
+        n[key] = o;
+      });
+      if (state.sel) {
+        n.sel = {
+          head: state.sel.head && copyCursor(state.sel.head),
+          anchor: state.sel.anchor && copyCursor(state.sel.anchor)
+        };
+      }
+      return n;
+    }
+    function multiSelectHandleKey(cm, key, origin) {
+      var isHandled = false;
+      var vim = vimApi.maybeInitVimState_(cm);
+      var visualBlock = vim.visualBlock || vim.wasInVisualBlock;
 
+      var wasMultiselect = cm.isInMultiSelectMode();
+      if (vim.wasInVisualBlock && !wasMultiselect) {
+        vim.wasInVisualBlock = false;
+      } else if (wasMultiselect && vim.visualBlock) {
+         vim.wasInVisualBlock = true;
+      }
+
+      if (key == '<Esc>' && !vim.insertMode && !vim.visualMode && wasMultiselect && vim.status == "<Esc>") {
+        // allow editor to exit multiselect
+        clearInputState(cm);
+      } else if (visualBlock || !wasMultiselect || cm.inVirtualSelectionMode) {
+        isHandled = vimApi.handleKey(cm, key, origin);
+      } else {
+        var old = cloneVimState(vim);
+
+        cm.operation(function() {
+          cm.curOp.isVimOp = true;
+          cm.forEachSelection(function() {
+            var head = cm.getCursor("head");
+            var anchor = cm.getCursor("anchor");
+            var headOffset = !cursorIsBefore(head, anchor) ? -1 : 0;
+            var anchorOffset = cursorIsBefore(head, anchor) ? -1 : 0;
+            head = offsetCursor(head, 0, headOffset);
+            anchor = offsetCursor(anchor, 0, anchorOffset);
+            cm.state.vim.sel.head = head;
+            cm.state.vim.sel.anchor = anchor;
+
+            isHandled = vimApi.handleKey(cm, key, origin);
+            if (cm.virtualSelection) {
+              cm.state.vim = cloneVimState(old);
+            }
+          });
+          if (cm.curOp.cursorActivity && !isHandled)
+            cm.curOp.cursorActivity = false;
+          cm.state.vim = vim;
+        }, true);
+      }
+      // some commands may bring visualMode and selection out of sync
+      if (isHandled && !vim.visualMode && !vim.insert && vim.visualMode != cm.somethingSelected()) {
+        handleExternalSelection(cm, vim);
+      }
+      return isHandled;
+    }
+    resetVimGlobalState();
+
+  return vimApi;
+}
+
+function initVim(CodeMirror5) {
+  CodeMirror5.Vim = initVim$1(CodeMirror5);
+  return CodeMirror5.Vim;
+}
+
+
+
+    CodeMirror.Vim = initVim(CodeMirror);
+  });
+  
 
 /***/ }),
 /* 133 */
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -84891,6 +84926,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 
   function SearchCursor(doc, query, pos, options) {
     this.atOccurrence = false
+    this.afterEmptyMatch = false
     this.doc = doc
     pos = pos ? doc.clipPos(pos) : Pos(0, 0)
     this.pos = {from: pos, to: pos}
@@ -84926,21 +84962,29 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
     findPrevious: function() {return this.find(true)},
 
     find: function(reverse) {
-      var result = this.matches(reverse, this.doc.clipPos(reverse ? this.pos.from : this.pos.to))
-
-      // Implements weird auto-growing behavior on null-matches for
-      // backwards-compatibility with the vim code (unfortunately)
-      while (result && CodeMirror.cmpPos(result.from, result.to) == 0) {
+      var head = this.doc.clipPos(reverse ? this.pos.from : this.pos.to);
+      if (this.afterEmptyMatch && this.atOccurrence) {
+        // do not return the same 0 width match twice
+        head = Pos(head.line, head.ch)
         if (reverse) {
-          if (result.from.ch) result.from = Pos(result.from.line, result.from.ch - 1)
-          else if (result.from.line == this.doc.firstLine()) result = null
-          else result = this.matches(reverse, this.doc.clipPos(Pos(result.from.line - 1)))
+          head.ch--;
+          if (head.ch < 0) {
+            head.line--;
+            head.ch = (this.doc.getLine(head.line) || "").length;
+          }
         } else {
-          if (result.to.ch < this.doc.getLine(result.to.line).length) result.to = Pos(result.to.line, result.to.ch + 1)
-          else if (result.to.line == this.doc.lastLine()) result = null
-          else result = this.matches(reverse, Pos(result.to.line + 1, 0))
+          head.ch++;
+          if (head.ch > (this.doc.getLine(head.line) || "").length) {
+            head.ch = 0;
+            head.line++;
+          }
+        }
+        if (CodeMirror.cmpPos(head, this.doc.clipPos(head)) != 0) {
+           return this.atOccurrence = false
         }
       }
+      var result = this.matches(reverse, head)
+      this.afterEmptyMatch = result && CodeMirror.cmpPos(result.from, result.to) == 0
 
       if (result) {
         this.pos = result
@@ -84990,7 +85034,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 // Open simple dialogs on top of an editor. Relies on dialog.css.
 
@@ -85159,7 +85203,7 @@ CodeMirror.multiplexingMode = function(outer /*, others */) {
 /***/ (function(module, exports, __webpack_require__) {
 
 // CodeMirror, copyright (c) by Marijn Haverbeke and others
-// Distributed under an MIT license: https://codemirror.net/LICENSE
+// Distributed under an MIT license: https://codemirror.net/5/LICENSE
 
 (function(mod) {
   if (true) // CommonJS
@@ -85351,7 +85395,7 @@ var render = function() {
                   "div",
                   { staticClass: "bg-30 flex flex-wrap border-b border-70" },
                   [
-                    _c("div", { staticClass: "w-3/4 px-4 py-3 " }, [
+                    _c("div", { staticClass: "w-3/4 px-4 py-3" }, [
                       _vm._v(
                         "\n                    " +
                           _vm._s(_vm.__("Preview of")) +
@@ -85578,7 +85622,7 @@ var render = function() {
                                           ],
                                           ref: "inputName",
                                           staticClass:
-                                            " value px-1 py-1 rounded-r",
+                                            "value px-1 py-1 rounded-r",
                                           style: {
                                             width: _vm.nameWidth + "px"
                                           },
@@ -87697,7 +87741,7 @@ function _asyncToGenerator(fn) { return function () { var gen = fn.apply(this, a
         message = utf8.stringToBytes(message);
     else if (isBuffer(message))
       message = Array.prototype.slice.call(message, 0);
-    else if (!Array.isArray(message))
+    else if (!Array.isArray(message) && message.constructor !== Uint8Array)
       message = message.toString();
     // else, assume byte array already
 
@@ -91302,7 +91346,7 @@ var render = function() {
                 _vm.file.mime != "image"
                   ? _c("div", {
                       staticClass:
-                        "mime-icon flex items-center justify-center  h-5/6",
+                        "mime-icon flex items-center justify-center h-5/6",
                       domProps: { innerHTML: _vm._s(_vm.file.thumb) }
                     })
                   : _vm._e(),
@@ -91318,7 +91362,7 @@ var render = function() {
                   "div",
                   {
                     staticClass:
-                      "actions-grid absolute pin-t pin-r pr-2 pt-2 pb-1 pl-2 ",
+                      "actions-grid absolute pin-t pin-r pr-2 pt-2 pb-1 pl-2",
                     class: {
                       hidden: !_vm.multiSelecting,
                       "bg-50": _vm.shouldShowHover
@@ -91438,7 +91482,7 @@ var render = function() {
                   "div",
                   {
                     staticClass:
-                      "h-1/6 w-full text-center text-xs  border-t border-30 bg-50 flex items-center justify-center"
+                      "h-1/6 w-full text-center text-xs border-t border-30 bg-50 flex items-center justify-center"
                   },
                   [
                     _vm._v(
@@ -92110,7 +92154,7 @@ var render = function() {
                         "div",
                         {
                           staticClass:
-                            "h-1/6 w-full text-center text-xs  border-t border-30 bg-50 flex items-center justify-center"
+                            "h-1/6 w-full text-center text-xs border-t border-30 bg-50 flex items-center justify-center"
                         },
                         [
                           _vm._v(
@@ -92165,7 +92209,7 @@ var render = function() {
                                     ? _c(
                                         "div",
                                         {
-                                          staticClass: "cursor-pointer  mr-2",
+                                          staticClass: "cursor-pointer mr-2",
                                           on: {
                                             click: function($event) {
                                               $event.preventDefault()
@@ -92248,7 +92292,7 @@ var render = function() {
                         "div",
                         {
                           staticClass:
-                            "h-1/6 w-full text-center text-xs  border-t border-30 bg-50 flex items-center justify-center"
+                            "h-1/6 w-full text-center text-xs border-t border-30 bg-50 flex items-center justify-center"
                         },
                         [
                           _vm._v(
